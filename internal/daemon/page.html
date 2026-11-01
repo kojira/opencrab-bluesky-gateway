@@ -94,7 +94,7 @@ function botForm(b) {
     try { await api('DELETE', '/api/bots/' + b.instance_id); msg(b.label + ' を削除しました'); load(); }
     catch (e) { msg('削除できません: ' + e.message, true); }
   };
-  const coreLine = !b.enabled ? '' : b.status.connected ? el('p', { class: 'muted ok' }, 'core: 接続済み') : el('p', { class: 'muted ' + (b.status.core_error ? 'err' : '') }, 'core: ' + (coreReason(b.status.core_error) || '接続中'));
+  const coreLine = !b.enabled ? '' : b.status.connected ? el('p', { class: 'muted ok' }, 'core: 接続済み') : el('p', { class: 'muted ' + (b.status.core_error ? 'err' : '') }, coreReason(b.status.core_error) || 'core: 接続中');
   const detail = b.status.last_error ? el('p', { class: 'muted err' }, 'Bluesky: ' + b.status.last_error) : '';
   return el('fieldset', {},
     el('legend', {}, b.label, el('span', { class: 'badge ' + cls }, state)),
@@ -113,9 +113,9 @@ function botForm(b) {
 }
 function coreReason(e) {
   if (!e) return '';
-  if (e.includes('subject_unknown')) return 'core にこのエージェントがいません（' + e + '）';
-  if (e.includes('instance_active')) return '同じ bot が別のところで接続中です（' + e + '）';
-  if (e.includes('connect')) return 'core のソケットにつながりません（' + e + '）';
+  if (e.includes('subject_unknown')) return 'core にこのエージェントがいません（subject_unknown）';
+  if (e.includes('instance_active')) return '同じ bot が別のところで接続中です（instance_active）';
+  if (e.includes('connect')) return 'core のソケットにつながりません';
   return e;
 }
 let agents = [];
