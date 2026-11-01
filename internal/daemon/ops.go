@@ -81,13 +81,18 @@ type Poster interface {
 	Follow(ctx context.Context, who string) (string, error)
 }
 
-// Ops runs core's invokes and says for one bot.
+// Ops runs core's invokes and says for one bot. Bsky is nil while the bot has no account.
 type Ops struct {
 	Bsky       Poster
 	OutboxRoot string
 }
 
+var errNoAccount = errors.New("the bot has no Bluesky account yet")
+
 func (o *Ops) Say(ctx context.Context, _ string, text, replyTarget string) error {
+	if o.Bsky == nil {
+		return errNoAccount
+	}
 	_, err := o.Bsky.Post(ctx, text, replyTarget, nil)
 	return err
 }
@@ -107,7 +112,7 @@ func (o *Ops) Invoke(ctx context.Context, _ string, operation string, raw json.R
 		User  string            `json:"user"`
 		Files []json.RawMessage `json:"files"`
 	}
-	if json.Unmarshal(raw, &p) != nil {
+	if o.Bsky == nil || json.Unmarshal(raw, &p) != nil {
 		return nil, gate.OutcomeRejected
 	}
 	switch operation {

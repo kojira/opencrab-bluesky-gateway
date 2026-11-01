@@ -224,6 +224,9 @@ func TestInvokeRunsTheOperation(t *testing.T) {
 	if strings.Join(p.calls, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls %v", p.calls)
 	}
+	if _, out := (&Ops{}).Invoke(ctx, "s", "like", json.RawMessage(`{"event":"at://p"}`)); out != gate.OutcomeRejected {
+		t.Fatal("a bot without an account must reject")
+	}
 	p.err = &bsky.APIError{Status: 400, Code: "InvalidRequest"}
 	if _, out := o.Invoke(ctx, "s", "like", json.RawMessage(`{"event":"at://p"}`)); out != gate.OutcomeRejected {
 		t.Fatal("a 400 must be a rejection")

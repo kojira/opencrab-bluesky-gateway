@@ -51,6 +51,7 @@ func LoadConfig(path string) (Config, error) {
 type Status struct {
 	Running   bool   `json:"running"`
 	Connected bool   `json:"connected"`
+	CoreError string `json:"core_error"`
 	LoggedIn  bool   `json:"logged_in"`
 	LastError string `json:"last_error"`
 	LastPoll  string `json:"last_poll"`
@@ -113,13 +114,17 @@ func (d *Daemon) Apply(id string) {
 		old.cancel()
 		<-old.done
 	}
+	// An enabled bot always connects to core; it reads Bluesky only once it has credentials.
 	b, err := d.Store.Get(id)
-	if err != nil || !b.Enabled || !b.Configured() || ctx == nil {
+	if err != nil || !b.Enabled || ctx == nil {
 		return
 	}
 	rctx, cancel := context.WithCancel(ctx)
 	bs := d.newBsky(b)
-	ops := &Ops{Bsky: bs, OutboxRoot: d.Config.AttachmentOutboxRoot}
+	ops := &Ops{OutboxRoot: d.Config.AttachmentOutboxRoot}
+	if b.Configured() {
+		ops.Bsky = bs
+	}
 	r := &runner{cancel: cancel, done: make(chan struct{})}
 	r.client = &gate.Client{
 		Socket:        d.Config.CoreSocket,
@@ -135,9 +140,12 @@ func (d *Daemon) Apply(id string) {
 	d.runners[id] = r
 	d.mu.Unlock()
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(1)
 	go func() { defer wg.Done(); r.client.Run(rctx) }()
-	go func() { defer wg.Done(); d.poll(rctx, b, bs, r) }()
+	if b.Configured() {
+		wg.Add(1)
+		go func() { defer wg.Done(); d.poll(rctx, b, bs, r) }()
+	}
 	go func() { wg.Wait(); close(r.done) }()
 }
 
@@ -164,6 +172,7 @@ func (d *Daemon) Status(id string) Status {
 	defer r.mu.Unlock()
 	st := r.st
 	st.Connected = r.client.Ready()
+	st.CoreError = r.client.LastError()
 	return st
 }
 

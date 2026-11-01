@@ -56,17 +56,18 @@ type Client struct {
 	digest string
 	seq    atomic.Uint64
 
-	mu      sync.Mutex
-	conn    net.Conn
-	ready   bool
-	pending map[string]chan *Msg
-	wmu     sync.Mutex
+	mu        sync.Mutex
+	conn      net.Conn
+	ready     bool
+	lastError string
+	pending   map[string]chan *Msg
+	wmu       sync.Mutex
 }
 
 // SaidError is core's err answer to a said.
 type SaidError struct{ Code string }
 
-func (e *SaidError) Error() string { return "gate: said rejected: " + e.Code }
+func (e *SaidError) Error() string { return "core: " + e.Code }
 
 func (c *Client) logger() *slog.Logger {
 	if c.Log != nil {
@@ -77,6 +78,19 @@ func (c *Client) logger() *slog.Logger {
 
 func (c *Client) nextID(prefix string) string {
 	return prefix + ":" + strconv.FormatUint(c.seq.Add(1), 10)
+}
+
+// LastError is why the last connection or hello failed ("" after a successful hello).
+func (c *Client) LastError() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastError
+}
+
+func (c *Client) setError(msg string) {
+	c.mu.Lock()
+	c.lastError = msg
+	c.mu.Unlock()
 }
 
 // Ready reports whether hello was accepted on the current connection.
@@ -99,6 +113,9 @@ func (c *Client) Run(ctx context.Context) {
 		helloOK, err := c.session(ctx)
 		if err != nil && ctx.Err() == nil {
 			c.logger().Warn("gate connection ended", "instance_id", c.InstanceID, "err", err)
+			if !helloOK {
+				c.setError(err.Error())
+			}
 		}
 		if helloOK {
 			backoff = reconnectMin
@@ -228,6 +245,7 @@ func (c *Client) session(ctx context.Context) (helloOK bool, err error) {
 	}
 	c.mu.Lock()
 	c.ready = true
+	c.lastError = ""
 	c.mu.Unlock()
 	c.logger().Info("hello ok", "instance_id", c.InstanceID)
 	return true, <-readErr

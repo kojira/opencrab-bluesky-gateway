@@ -67,8 +67,9 @@ function el(tag, attrs = {}, ...children) {
   return e;
 }
 function stateOf(b) {
-  if (!b.configured) return ['未設定', 'warn'];
   if (!b.enabled) return ['停止中', 'muted'];
+  if (b.status.core_error) return ['core に接続できない', 'err'];
+  if (!b.configured) return ['未設定', 'warn'];
   if (b.status.last_error) return ['エラー', 'err'];
   if (b.status.connected && b.status.logged_in) return ['動作中', 'ok'];
   return ['接続中', 'warn'];
@@ -93,10 +94,12 @@ function botForm(b) {
     try { await api('DELETE', '/api/bots/' + b.instance_id); msg(b.label + ' を削除しました'); load(); }
     catch (e) { msg('削除できません: ' + e.message, true); }
   };
-  const detail = b.status.last_error ? el('p', { class: 'muted err' }, '最後のエラー: ' + b.status.last_error) : '';
+  const coreLine = !b.enabled ? '' : b.status.connected ? el('p', { class: 'muted ok' }, 'core: 接続済み') : el('p', { class: 'muted ' + (b.status.core_error ? 'err' : '') }, 'core: ' + (coreReason(b.status.core_error) || '接続中'));
+  const detail = b.status.last_error ? el('p', { class: 'muted err' }, 'Bluesky: ' + b.status.last_error) : '';
   return el('fieldset', {},
     el('legend', {}, b.label, el('span', { class: 'badge ' + cls }, state)),
     el('p', { class: 'muted' }, 'エージェント ID: ', el('span', { class: 'id' }, b.agent_id)),
+    coreLine,
     detail,
     el('div', { class: 'grid c2' },
       el('label', {}, 'ハンドル', handle),
@@ -107,6 +110,13 @@ function botForm(b) {
       el('label', { class: 'check' }, enabled, '動かす')),
     el('label', {}, 'オーナー（1 行に 1 つ、ハンドルか did）', owners),
     el('div', { class: 'row' }, save, del));
+}
+function coreReason(e) {
+  if (!e) return '';
+  if (e.includes('subject_unknown')) return 'core にこのエージェントがいません（' + e + '）';
+  if (e.includes('instance_active')) return '同じ bot が別のところで接続中です（' + e + '）';
+  if (e.includes('connect')) return 'core のソケットにつながりません（' + e + '）';
+  return e;
 }
 let agents = [];
 async function load() {
