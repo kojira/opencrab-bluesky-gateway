@@ -44,7 +44,11 @@ core とは core の gate ソケット（Unix ドメインソケット）で、g
   "data_dir": "/path/to/bluesky-gateway-data",
   "listen": "0.0.0.0:8795",
   "core_api": "http://127.0.0.1:8080",
-  "attachment_outbox_root": "/path/to/opencrab/data/attachments/outbox"
+  "attachment_outbox_root": "/path/to/opencrab/data/attachments/outbox",
+  "oauth": {
+    "client_id": "https://kojira.github.io/opencrab-bluesky-gateway/oauth/prod/client-metadata.json",
+    "callback_url": "https://<ホスト>.<tailnet>.ts.net:8796/oauth/callback"
+  }
 }
 ```
 
@@ -55,6 +59,7 @@ core とは core の gate ソケット（Unix ドメインソケット）で、g
 | `listen` |  | 設定画面の待ち受け。既定 `0.0.0.0:8795` |
 | `core_api` |  | core の HTTP API。設定画面のエージェント一覧に使います。無ければエージェント ID を手で入れます。 |
 | `attachment_outbox_root` |  | core の送信用ファイル置き場。画像の投稿に使います。 |
+| `oauth` |  | 「Bluesky でログイン」を使うときの設定（下の「OAuth でログイン」）。無ければアプリパスワードだけです。 |
 
 ## 動かす
 
@@ -86,6 +91,43 @@ launchctl load ~/Library/LaunchAgents/com.kojira.opencrab-bluesky-gateway.plist
 - 保存すると、その bot だけが再起動します。
 - アプリパスワードは画面にも API にも出しません（「設定済み」と出ます）。変えるときだけ入れ直してください。
 - 「動かす」を外すと止まります。「削除」すると bot の設定が消えます（core の会話の記録は残ります）。
+
+## OAuth でログイン（Bluesky でログイン）
+
+アプリパスワードの代わりに、Bluesky の画面でログインして bot とアカウントを紐づけられます。
+
+使い方（設定画面）：
+1. bot の欄にハンドルを入れて「Bluesky でログイン」を押します。
+2. Bluesky の画面に移るので、その bot のアカウントでログインして「許可」します。
+3. 設定画面に戻り、「ログイン済み（OAuth）」と出ます。アプリパスワードは要りません。
+4. やめるときは「ログアウト」を押します（トークンを取り消して、消します）。
+
+- 取ったトークンと鍵は `data_dir` の `oauth.json`（モード 0600）にだけ置きます。画面・API・ログには出しません。
+- ログインしたアカウントが、ログインを始めたハンドルのアカウントと違えば断ります。
+- ハンドルを変えると、OAuth のログインは解除されます（新しいアカウントで入り直してください）。
+- この gateway は「confidential client」です。署名鍵は初回起動時に `data_dir/oauth-client-key`（モード 0600）に作り、公開鍵だけをクライアントメタデータに載せます。鍵を消すと、ログインし直しになります。
+
+### 準備（gateway ごとに 1 回）
+
+OAuth では、Bluesky の認可サーバーがクライアントメタデータ（JSON）をインターネットから読みに来ます。戻り先（`callback_url`）はブラウザが開ければよいので、tailnet の中だけで構いません。
+
+1. 戻り先を https にする（Tailscale）。設定画面が `8795` なら、たとえば `8796` で https にします。
+
+   ```sh
+   tailscale serve --bg --https=8796 http://127.0.0.1:8795
+   ```
+
+   `callback_url` は `https://<ホスト>.<tailnet>.ts.net:8796/oauth/callback` です。設定画面もこの https の URL で開けます。
+2. 設定ファイルに `oauth`（`client_id` と `callback_url`）を書いて起動します。
+3. `https://<ホスト>.<tailnet>.ts.net:8796/oauth/client-metadata.json` に出る JSON を、このリポジトリの `docs/oauth/<名前>/client-metadata.json` に置いて main に入れます。GitHub Pages（`docs/` を公開）で `https://kojira.github.io/opencrab-bluesky-gateway/oauth/<名前>/client-metadata.json` として公開され、これが `client_id` です。
+   - 中身は公開鍵と戻り先だけです。秘密は入っていません。
+   - `client_id` は、その JSON を取る URL と完全に同じでなければなりません。
+
+公開しているメタデータ：
+
+| 名前 | client_id |
+|---|---|
+| `qc` | https://kojira.github.io/opencrab-bluesky-gateway/oauth/qc/client-metadata.json |
 
 ## 開発
 

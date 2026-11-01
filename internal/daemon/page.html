@@ -33,7 +33,7 @@ label.check input { width: 1.4rem; height: 1.4rem; margin: 0; flex: none; }
 </head>
 <body>
 <h1>Bluesky gateway 設定</h1>
-<p class="muted">エージェントごとの Bluesky アカウントです。保存すると、その bot だけが再起動します。アプリパスワードは表示しません。</p>
+<p class="muted">エージェントごとの Bluesky アカウントです。保存すると、その bot だけが再起動します。アプリパスワードとログインの情報は表示しません。</p>
 <div id="msg"></div>
 
 <div id="bots"></div>
@@ -46,7 +46,7 @@ label.check input { width: 1.4rem; height: 1.4rem; margin: 0; flex: none; }
     <label>名前（表示用）<input id="label" type="text" autocomplete="off"></label>
   </div>
   <button id="add">追加</button>
-  <p class="muted">追加したあと、ハンドルとアプリパスワードを入れて保存すると動き始めます。</p>
+  <p class="muted">追加したあと、ハンドルを入れて「Bluesky でログイン」（またはアプリパスワードを入れて保存）すると動き始めます。</p>
 </fieldset>
 
 <script>
@@ -96,15 +96,36 @@ function botForm(b) {
   };
   const coreLine = !b.enabled ? '' : b.status.connected ? el('p', { class: 'muted ok' }, 'core: 接続済み') : el('p', { class: 'muted ' + (b.status.core_error ? 'err' : '') }, coreReason(b.status.core_error) || 'core: 接続中');
   const detail = b.status.last_error ? el('p', { class: 'muted err' }, 'Bluesky: ' + b.status.last_error) : '';
+  let oauthBox = '';
+  if (b.oauth_available) {
+    if (b.oauth) {
+      const out = el('button', {}, 'ログアウト');
+      out.onclick = async () => {
+        if (!confirm(b.label + ' の Bluesky ログイン（OAuth）を解除しますか？')) return;
+        try { await api('POST', '/api/bots/' + b.instance_id + '/oauth/logout'); msg(b.label + ' をログアウトしました'); load(); }
+        catch (e) { msg('ログアウトできません: ' + e.message, true); }
+      };
+      oauthBox = el('div', { class: 'row' }, el('span', { class: 'ok' }, 'ログイン済み（OAuth）'), el('span', { class: 'id muted' }, b.oauth.did), out);
+    } else {
+      const login = el('button', {}, 'Bluesky でログイン');
+      login.onclick = () => {
+        const h = handle.value.trim().replace(/^@/, '');
+        if (!h) { msg('先にハンドルを入れてください', true); handle.focus(); return; }
+        location.href = '/oauth/login/' + encodeURIComponent(b.instance_id) + '?handle=' + encodeURIComponent(h);
+      };
+      oauthBox = el('div', {}, el('div', { class: 'row' }, login),
+        el('p', { class: 'muted' }, 'ハンドルを入れて押すと Bluesky の画面に移ります。許可すると、ここに戻ってきます。ログインしたらアプリパスワードは要りません。'));
+    }
+  }
   return el('fieldset', {},
     el('legend', {}, b.label, el('span', { class: 'badge ' + cls }, state)),
     el('p', { class: 'muted' }, 'エージェント ID: ', el('span', { class: 'id' }, b.agent_id)),
     coreLine,
     detail,
-    el('div', { class: 'grid c2' },
-      el('label', {}, 'ハンドル', handle),
-      el('label', {}, 'アプリパスワード', pass)),
-    el('p', { class: 'muted' }, 'アプリパスワードは Bluesky の「設定 → プライバシーとセキュリティ → アプリパスワード」で作れます。'),
+    el('label', {}, 'ハンドル', handle),
+    oauthBox,
+    b.oauth ? '' : el('label', {}, b.oauth_available ? 'アプリパスワード（OAuth を使わないとき）' : 'アプリパスワード', pass),
+    b.oauth ? '' : el('p', { class: 'muted' }, 'アプリパスワードは Bluesky の「設定 → プライバシーとセキュリティ → アプリパスワード」で作れます。'),
     el('div', { class: 'grid c2' },
       el('label', {}, '通知を見る間隔（秒）', poll),
       el('label', { class: 'check' }, enabled, '動かす')),
@@ -140,6 +161,10 @@ $('add').onclick = async () => {
   try { await api('POST', '/api/bots', body); msg((body.label || body.agent_id) + ' を追加しました'); $('agent-id').value = ''; $('label').value = ''; load(); }
   catch (e) { msg('追加できません: ' + e.message, true); }
 };
+{
+  const done = new URLSearchParams(location.search).get('oauth');
+  if (done) { msg(done + ' を Bluesky にログインしました（OAuth）'); history.replaceState(null, '', '/'); }
+}
 load();
 setInterval(() => { if (!document.activeElement || document.activeElement === document.body) refreshStates(); }, 10000);
 async function refreshStates() {
