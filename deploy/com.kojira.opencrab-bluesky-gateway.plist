@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyLists/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kojira.opencrab-bluesky-gateway</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/YOU/opencrab-bluesky-gateway/opencrab-bluesky-gateway</string>
+    <string>/Users/YOU/opencrab-bluesky-gateway/config.json</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/YOU/Library/Logs/opencrab-bluesky-gateway.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOU/Library/Logs/opencrab-bluesky-gateway.log</string>
+</dict>
+</plist>
