@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bluesky gateway 設定</title>
+<style>
+:root { color-scheme: light dark; --gap: .75rem; --line: #8886; }
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Segoe UI", "Noto Sans JP", sans-serif; max-width: 860px; margin: 0 auto; padding: 1rem; }
+h1 { font-size: 1.35rem; margin: .25rem 0 .5rem; }
+h2 { font-size: 1.1rem; margin: 1.25rem 0 .5rem; padding-bottom: .25rem; border-bottom: 1px solid var(--line); }
+p { margin: .4rem 0; }
+fieldset { margin: 0 0 var(--gap); padding: .75rem; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+legend { font-weight: 600; padding: 0 .35rem; overflow-wrap: anywhere; }
+label { display: block; margin: 0 0 var(--gap); }
+input:not([type=checkbox]), select, textarea { display: block; width: 100%; margin-top: .25rem; font: inherit; font-size: 16px; padding: .55rem .65rem; border: 1px solid #8888; border-radius: 6px; min-height: 44px; }
+textarea { min-height: 4.5em; }
+button { font: inherit; font-size: 16px; min-height: 44px; padding: .5rem 1rem; margin: .25rem .5rem .25rem 0; border: 1px solid #8888; border-radius: 8px; cursor: pointer; }
+label.check { display: flex; align-items: center; gap: .6rem; min-height: 44px; }
+label.check input { width: 1.4rem; height: 1.4rem; margin: 0; flex: none; }
+.grid { display: grid; grid-template-columns: minmax(0, 1fr); column-gap: var(--gap); }
+@media (min-width: 640px) { .grid.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.muted { color: #888; font-size: .9rem; }
+.id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; overflow-wrap: anywhere; }
+.badge { display: inline-block; padding: .05rem .5rem; border-radius: 999px; border: 1px solid var(--line); font-size: .85rem; margin-left: .35rem; }
+.ok { color: #1a7f37; } .warn { color: #b35900; } .err { color: #c00; }
+#msg { position: sticky; top: 0; z-index: 1; padding: .4rem 0; background: Canvas; overflow-wrap: anywhere; }
+#msg:empty { padding: 0; }
+.row { display: flex; flex-wrap: wrap; gap: .25rem; align-items: center; }
+</style>
+</head>
+<body>
+<h1>Bluesky gateway 設定</h1>
+<p class="muted">エージェントごとの Bluesky アカウントです。保存すると、その bot だけが再起動します。アプリパスワードは表示しません。</p>
+<div id="msg"></div>
+
+<div id="bots"></div>
+
+<h2>bot を追加</h2>
+<fieldset>
+  <label>エージェント<select id="agent"></select></label>
+  <div id="manual">
+    <label>エージェント ID<input id="agent-id" type="text" autocomplete="off"></label>
+    <label>名前（表示用）<input id="label" type="text" autocomplete="off"></label>
+  </div>
+  <button id="add">追加</button>
+  <p class="muted">追加したあと、ハンドルとアプリパスワードを入れて保存すると動き始めます。</p>
+</fieldset>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const msg = (text, err) => { $('msg').textContent = text; $('msg').className = err ? 'err' : ''; };
+async function api(method, path, body) {
+  const res = await fetch(path, body === undefined ? { method } : { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+function el(tag, attrs = {}, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') e.className = v; else if (k in e) e[k] = v; else e.setAttribute(k, v);
+  }
+  for (const c of children) e.append(c);
+  return e;
+}
+function stateOf(b) {
+  if (!b.enabled) return ['停止中', 'muted'];
+  if (b.status.core_error) return ['core に接続できない', 'err'];
+  if (!b.configured) return ['未設定', 'warn'];
+  if (b.status.last_error) return ['エラー', 'err'];
+  if (b.status.connected && b.status.logged_in) return ['動作中', 'ok'];
+  return ['接続中', 'warn'];
+}
+function botForm(b) {
+  const [state, cls] = stateOf(b);
+  const handle = el('input', { type: 'text', value: b.handle, autocomplete: 'off', placeholder: 'example.bsky.social' });
+  const pass = el('input', { type: 'password', autocomplete: 'new-password', placeholder: b.app_password_set ? '設定済み（変えるときだけ入力）' : 'xxxx-xxxx-xxxx-xxxx' });
+  const enabled = el('input', { type: 'checkbox', checked: b.enabled });
+  const poll = el('input', { type: 'number', min: 10, max: 3600, value: b.poll_secs, inputMode: 'numeric' });
+  const owners = el('textarea', { value: (b.owners || []).join('\n'), placeholder: 'your.handle.bsky.social' });
+  const save = el('button', {}, '保存');
+  const del = el('button', {}, '削除');
+  save.onclick = async () => {
+    const body = { handle: handle.value, enabled: enabled.checked, poll_secs: Number(poll.value), owners: owners.value.split('\n').map(s => s.trim()).filter(Boolean) };
+    if (pass.value) body.app_password = pass.value;
+    try { await api('PATCH', '/api/bots/' + b.instance_id, body); msg(b.label + ' を保存しました'); load(); }
+    catch (e) { msg('保存できません: ' + e.message, true); }
+  };
+  del.onclick = async () => {
+    if (!confirm(b.label + ' の bot を削除しますか？（会話の記録は core に残ります）')) return;
+    try { await api('DELETE', '/api/bots/' + b.instance_id); msg(b.label + ' を削除しました'); load(); }
+    catch (e) { msg('削除できません: ' + e.message, true); }
+  };
+  const coreLine = !b.enabled ? '' : b.status.connected ? el('p', { class: 'muted ok' }, 'core: 接続済み') : el('p', { class: 'muted ' + (b.status.core_error ? 'err' : '') }, coreReason(b.status.core_error) || 'core: 接続中');
+  const detail = b.status.last_error ? el('p', { class: 'muted err' }, 'Bluesky: ' + b.status.last_error) : '';
+  return el('fieldset', {},
+    el('legend', {}, b.label, el('span', { class: 'badge ' + cls }, state)),
+    el('p', { class: 'muted' }, 'エージェント ID: ', el('span', { class: 'id' }, b.agent_id)),
+    coreLine,
+    detail,
+    el('div', { class: 'grid c2' },
+      el('label', {}, 'ハンドル', handle),
+      el('label', {}, 'アプリパスワード', pass)),
+    el('p', { class: 'muted' }, 'アプリパスワードは Bluesky の「設定 → プライバシーとセキュリティ → アプリパスワード」で作れます。'),
+    el('div', { class: 'grid c2' },
+      el('label', {}, '通知を見る間隔（秒）', poll),
+      el('label', { class: 'check' }, enabled, '動かす')),
+    el('label', {}, 'オーナー（1 行に 1 つ、ハンドルか did）', owners),
+    el('div', { class: 'row' }, save, del));
+}
+function coreReason(e) {
+  if (!e) return '';
+  if (e.includes('subject_unknown')) return 'core にこのエージェントがいません（subject_unknown）';
+  if (e.includes('instance_active')) return '同じ bot が別のところで接続中です（instance_active）';
+  if (e.includes('connect')) return 'core のソケットにつながりません';
+  return e;
+}
+let agents = [];
+async function load() {
+  try {
+    const { bots } = await api('GET', '/api/bots');
+    const box = $('bots');
+    box.replaceChildren(el('h2', {}, 'bot'), ...(bots.length ? bots.map(botForm) : [el('p', { class: 'muted' }, 'まだ bot はありません。')]));
+    agents = (await api('GET', '/api/agents').catch(() => ({ agents: [] }))).agents;
+    const sel = $('agent');
+    const free = agents.filter(a => !a.has_bot);
+    sel.replaceChildren(...free.map(a => el('option', { value: a.id }, a.name)), el('option', { value: '' }, 'ID を入力する'));
+    sel.onchange = () => { $('manual').hidden = sel.value !== ''; };
+    sel.onchange();
+  } catch (e) { msg('読み込めません: ' + e.message, true); }
+}
+$('add').onclick = async () => {
+  const sel = $('agent');
+  const agent = sel.value ? agents.find(a => a.id === sel.value) : null;
+  const body = agent ? { agent_id: agent.id, label: agent.name } : { agent_id: $('agent-id').value.trim(), label: $('label').value.trim() };
+  if (!body.agent_id) { msg('エージェントを選ぶか、ID を入れてください', true); return; }
+  try { await api('POST', '/api/bots', body); msg((body.label || body.agent_id) + ' を追加しました'); $('agent-id').value = ''; $('label').value = ''; load(); }
+  catch (e) { msg('追加できません: ' + e.message, true); }
+};
+load();
+setInterval(() => { if (!document.activeElement || document.activeElement === document.body) refreshStates(); }, 10000);
+async function refreshStates() {
+  try {
+    const { bots } = await api('GET', '/api/bots');
+    for (const b of bots) {
+      const fs = [...document.querySelectorAll('#bots fieldset')].find(f => f.textContent.includes(b.agent_id));
+      const badge = fs && fs.querySelector('.badge');
+      if (badge) { const [s, c] = stateOf(b); badge.textContent = s; badge.className = 'badge ' + c; }
+    }
+  } catch (_) {}
+}
+</script>
+</body>
+</html>

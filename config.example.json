@@ -1,0 +1,7 @@
+{
+  "core_socket": "/path/to/opencrab/data/run/gate.sock",
+  "data_dir": "/path/to/bluesky-gateway-data",
+  "listen": "0.0.0.0:8795",
+  "core_api": "http://127.0.0.1:8080",
+  "attachment_outbox_root": "/path/to/opencrab/data/attachments/outbox"
+}
