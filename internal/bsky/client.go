@@ -13,6 +13,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/bluesky-social/indigo/atproto/auth/oauth"
+	"github.com/bluesky-social/indigo/atproto/syntax"
 )
 
 const DefaultService = "https://bsky.social"
@@ -33,12 +36,14 @@ func (e *APIError) Permanent() bool {
 	return e.Status >= 400 && e.Status < 500 && e.Status != 429 && e.Status != 401
 }
 
-// Client is one account's session. The app password stays in memory only.
+// Client is one account's session: an OAuth session when the bot is linked (DPoP, refresh and
+// nonces handled by the session), otherwise the app password (kept in memory only).
 type Client struct {
 	Service  string
 	Handle   string
 	Password string
 	HTTP     *http.Client
+	OAuth    *oauth.ClientSession
 
 	mu      sync.Mutex
 	access  string
@@ -67,8 +72,14 @@ type session struct {
 	Handle     string `json:"handle"`
 }
 
-// Login creates a session with the handle and app password.
+// Login creates a session with the handle and app password (an OAuth session needs none).
 func (c *Client) Login(ctx context.Context) error {
+	if c.OAuth != nil {
+		c.mu.Lock()
+		c.DID = c.OAuth.Data.AccountDID.String()
+		c.mu.Unlock()
+		return nil
+	}
 	var s session
 	err := c.do(ctx, http.MethodPost, "com.atproto.server.createSession", nil,
 		map[string]string{"identifier": c.Handle, "password": c.Password}, "", &s)
@@ -103,6 +114,9 @@ func (c *Client) refreshSession(ctx context.Context) error {
 
 // call is an authenticated XRPC call; an expired token is refreshed once.
 func (c *Client) call(ctx context.Context, method, nsid string, query url.Values, body any, out any) error {
+	if c.OAuth != nil {
+		return c.do(ctx, method, nsid, query, body, "", out)
+	}
 	c.mu.Lock()
 	token := c.access
 	c.mu.Unlock()
@@ -129,7 +143,11 @@ func (c *Client) call(ctx context.Context, method, nsid string, query url.Values
 }
 
 func (c *Client) do(ctx context.Context, method, nsid string, query url.Values, body any, token string, out any) error {
-	u := c.service() + "/xrpc/" + nsid
+	base := c.service()
+	if c.OAuth != nil {
+		base = strings.TrimRight(c.OAuth.Data.HostURL, "/")
+	}
+	u := base + "/xrpc/" + nsid
 	if len(query) > 0 {
 		u += "?" + query.Encode()
 	}
@@ -155,10 +173,15 @@ func (c *Client) do(ctx context.Context, method, nsid string, query url.Values, 
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	var resp *http.Response
+	if c.OAuth != nil {
+		resp, err = c.OAuth.DoWithAuth(c.http(), req, syntax.NSID(nsid))
+	} else {
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err = c.http().Do(req)
 	}
-	resp, err := c.http().Do(req)
 	if err != nil {
 		return err
 	}
@@ -326,6 +349,9 @@ func (c *Client) SelfDID(ctx context.Context) (string, error) {
 
 // LoggedIn reports whether a session exists.
 func (c *Client) LoggedIn() bool {
+	if c.OAuth != nil {
+		return true
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.access != ""

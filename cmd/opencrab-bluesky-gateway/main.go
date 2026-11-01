@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/kojira/opencrab-bluesky-gateway/internal/daemon"
+	"github.com/kojira/opencrab-bluesky-gateway/internal/oauthlink"
 	"github.com/kojira/opencrab-bluesky-gateway/internal/store"
 )
 
@@ -43,6 +44,16 @@ func run(configPath string, log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	d := &daemon.Daemon{Config: cfg, Store: st, Log: log}
+	if cfg.OAuth != nil {
+		ost, err := oauthlink.OpenStore(cfg.DataDir)
+		if err != nil {
+			return err
+		}
+		if d.OAuth, err = oauthlink.New(*cfg.OAuth, cfg.DataDir, ost); err != nil {
+			return err
+		}
+		log.Info("oauth", "client_id", cfg.OAuth.ClientID, "callback", cfg.OAuth.CallbackURL)
+	}
 	d.Start(ctx)
 	srv := &http.Server{Addr: cfg.Listen, Handler: d.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)

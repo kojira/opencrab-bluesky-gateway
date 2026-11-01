@@ -15,6 +15,7 @@ import (
 	"github.com/kojira/opencrab-bluesky-gateway/internal/bsky"
 	"github.com/kojira/opencrab-bluesky-gateway/internal/gate"
 	"github.com/kojira/opencrab-bluesky-gateway/internal/inbound"
+	"github.com/kojira/opencrab-bluesky-gateway/internal/oauthlink"
 	"github.com/kojira/opencrab-bluesky-gateway/internal/store"
 )
 
@@ -27,6 +28,8 @@ type Config struct {
 	CoreAPI string `json:"core_api"`
 	// AttachmentOutboxRoot is core's outbox; enables images in post/reply when set.
 	AttachmentOutboxRoot string `json:"attachment_outbox_root"`
+	// OAuth enables 「Bluesky でログイン」 (optional; without it bots use app passwords).
+	OAuth *oauthlink.Config `json:"oauth"`
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -78,6 +81,8 @@ type Daemon struct {
 	Log    *slog.Logger
 	// NewBsky makes a bot's Bluesky client (replaced in tests).
 	NewBsky func(store.Bot) *bsky.Client
+	// OAuth links bots with atproto OAuth; nil when the config has no oauth block.
+	OAuth *oauthlink.Linker
 
 	mu      sync.Mutex
 	runners map[string]*runner
@@ -88,7 +93,27 @@ func (d *Daemon) newBsky(b store.Bot) *bsky.Client {
 	if d.NewBsky != nil {
 		return d.NewBsky(b)
 	}
-	return &bsky.Client{Service: b.Service, Handle: b.Handle, Password: b.AppPassword}
+	c := &bsky.Client{Service: b.Service, Handle: b.Handle, Password: b.AppPassword}
+	if d.OAuth != nil {
+		if sess, err := d.OAuth.Session(context.Background(), b.InstanceID); err == nil {
+			c.OAuth = sess
+		}
+	}
+	return c
+}
+
+// oauthLinked reports whether the bot has an OAuth session.
+func (d *Daemon) oauthLinked(id string) (oauthlink.Link, bool) {
+	if d.OAuth == nil {
+		return oauthlink.Link{}, false
+	}
+	return d.OAuth.Store.Linked(id)
+}
+
+// configured: the bot can reach its account (OAuth session, or handle and app password).
+func (d *Daemon) configured(b store.Bot) bool {
+	_, linked := d.oauthLinked(b.InstanceID)
+	return linked || b.Configured()
 }
 
 // Start runs every enabled, configured bot.
@@ -122,7 +147,7 @@ func (d *Daemon) Apply(id string) {
 	rctx, cancel := context.WithCancel(ctx)
 	bs := d.newBsky(b)
 	ops := &Ops{OutboxRoot: d.Config.AttachmentOutboxRoot}
-	if b.Configured() {
+	if d.configured(b) {
 		ops.Bsky = bs
 	}
 	r := &runner{cancel: cancel, done: make(chan struct{})}
@@ -142,7 +167,7 @@ func (d *Daemon) Apply(id string) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() { defer wg.Done(); r.client.Run(rctx) }()
-	if b.Configured() {
+	if d.configured(b) {
 		wg.Add(1)
 		go func() { defer wg.Done(); d.poll(rctx, b, bs, r) }()
 	}
