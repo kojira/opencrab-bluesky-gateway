@@ -1,0 +1,31 @@
+{
+  "client_id": "https://kojira.github.io/opencrab-bluesky-gateway/oauth/prod/client-metadata.json",
+  "application_type": "web",
+  "grant_types": [
+    "authorization_code",
+    "refresh_token"
+  ],
+  "scope": "atproto transition:generic",
+  "response_types": [
+    "code"
+  ],
+  "redirect_uris": [
+    "https://akiomac-mini.tail06d97.ts.net:8796/oauth/callback"
+  ],
+  "token_endpoint_auth_method": "private_key_jwt",
+  "token_endpoint_auth_signing_alg": "ES256",
+  "dpop_bound_access_tokens": true,
+  "jwks": {
+    "keys": [
+      {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "RSsmtOJ4jERebsB3ujOleyNNVdrP33kUey5p_7UQYYA",
+        "y": "gc2-6tOJu1yJ93a4XI2Ph8Scpp4rhoCjXxPkutXnv68",
+        "use": "sig",
+        "kid": "7ebd6ebee179"
+      }
+    ]
+  },
+  "client_name": "OpenCrab Bluesky gateway"
+}

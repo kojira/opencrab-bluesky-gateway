@@ -128,6 +128,7 @@ OAuth では、Bluesky の認可サーバーがクライアントメタデータ
 | 名前 | client_id |
 |---|---|
 | `qc` | https://kojira.github.io/opencrab-bluesky-gateway/oauth/qc/client-metadata.json |
+| `prod` | https://kojira.github.io/opencrab-bluesky-gateway/oauth/prod/client-metadata.json |
 
 ## 開発
 
