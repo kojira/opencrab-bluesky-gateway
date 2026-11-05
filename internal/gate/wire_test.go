@@ -65,6 +65,19 @@ func TestSaidFrameFields(t *testing.T) {
 	}
 }
 
+// system_context: the Rust client writes it as a plain string member, only when set (core takes a
+// non-empty string of at most 16,384 bytes and appends it to the turn's system prompt).
+func TestSaidFrameSystemContext(t *testing.T) {
+	f := SaidFrame("said:3", Said{Session: "s", Origin: "o", AuthorID: "a", Text: "t", SystemContext: "ctx"})
+	if got, _ := Marshal(f); !strings.Contains(string(got), `"system_context":"ctx"`) {
+		t.Fatalf("system_context missing: %s", got)
+	}
+	f = SaidFrame("said:4", Said{Session: "s", Origin: "o", AuthorID: "a", Text: "t"})
+	if _, ok := f["system_context"]; ok {
+		t.Fatalf("system_context must be absent when empty: %v", f)
+	}
+}
+
 // invoke_ok_frame / err_frame shapes.
 func TestResponseFrames(t *testing.T) {
 	cases := map[string]Obj{

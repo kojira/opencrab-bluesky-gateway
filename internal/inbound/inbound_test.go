@@ -2,6 +2,7 @@ package inbound
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/kojira/opencrab-bluesky-gateway/internal/bsky"
@@ -46,6 +47,28 @@ func TestOwnPostsLikesAndFollowsAreNotDelivered(t *testing.T) {
 	}
 	if _, ok := Map(note("at://6", "did:plc:alice", "quote", "2026-11-01T00:00:01Z", rec), "did:plc:bot", "a", nil); !ok {
 		t.Error("quote not delivered")
+	}
+}
+
+// D-1117: a delivered mention/reply/quote tells the model, as a fact, that plain text becomes an
+// unrelated new post and that reply answers in the author's thread.
+func TestDeliveredNotificationsCarryThreadContext(t *testing.T) {
+	for _, reason := range []string{"mention", "reply", "quote"} {
+		s, ok := Map(note("at://1", "did:plc:alice", reason, "2026-11-01T00:00:01Z", `{"text":"hi"}`), "did:plc:bot", "a", nil)
+		if !ok {
+			t.Fatalf("%s not delivered", reason)
+		}
+		if s.SystemContext != ReplyContext {
+			t.Fatalf("%s: system_context %q", reason, s.SystemContext)
+		}
+	}
+	for _, want := range []string{"reply", "e番号", "新しい投稿"} {
+		if !strings.Contains(ReplyContext, want) {
+			t.Errorf("context lacks %q", want)
+		}
+	}
+	if n := len(ReplyContext); n == 0 || n > 16384 {
+		t.Fatalf("context length %d outside core's 1..16384 bytes", n)
 	}
 }
 

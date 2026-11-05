@@ -118,6 +118,9 @@ type Said struct {
 	// answers.
 	Ref         string
 	ReplyTarget string
+	// SystemContext is appended by core to this turn's system prompt (non-empty, at most
+	// 16,384 bytes; omitted when empty).
+	SystemContext string
 }
 
 func SaidFrame(id string, s Said) Obj {
@@ -145,6 +148,9 @@ func SaidFrame(id string, s Said) Obj {
 	}
 	if s.ReplyTarget != "" {
 		f["reply_target"] = s.ReplyTarget
+	}
+	if s.SystemContext != "" {
+		f["system_context"] = s.SystemContext
 	}
 	return f
 }

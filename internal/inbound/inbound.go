@@ -17,6 +17,10 @@ func SessionKey(agentID string) string { return "bluesky-" + agentID }
 // Reasons delivered to the agent.
 var reasons = map[string]bool{"mention": true, "reply": true, "quote": true}
 
+// ReplyContext is what the model is told with every delivered mention/reply/quote (D-1117): how
+// an answer reaches the author on Bluesky. A fact, not an instruction; the model decides.
+const ReplyContext = "これは Bluesky であなた宛ての投稿（メンション/返信/引用）です。相手のスレッドで答えるには reply（event にこの投稿の e番号）を使います。地の文で書いた本文は、この投稿とは関係のない新しい投稿として公開されます。"
+
 type postRecord struct {
 	Text  string          `json:"text"`
 	Reply *bsky.ReplyRef  `json:"reply"`
@@ -70,12 +74,13 @@ func Map(n bsky.Notification, selfDID, agentID string, owners []string) (gate.Sa
 	var rec postRecord
 	_ = json.Unmarshal(n.Record, &rec)
 	s := gate.Said{
-		Session:     SessionKey(agentID),
-		Origin:      n.URI,
-		Ref:         n.URI,
-		AuthorID:    n.Author.DID,
-		AuthorLabel: truncate(n.Author.Label(), 100),
-		Text:        rec.Text,
+		Session:       SessionKey(agentID),
+		Origin:        n.URI,
+		Ref:           n.URI,
+		AuthorID:      n.Author.DID,
+		AuthorLabel:   truncate(n.Author.Label(), 100),
+		Text:          rec.Text,
+		SystemContext: ReplyContext,
 	}
 	for _, u := range ImageURLs(n.Author.DID, rec.Embed) {
 		s.Attachments = append(s.Attachments, gate.ImageURL(u))
