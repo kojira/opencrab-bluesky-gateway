@@ -65,7 +65,7 @@ func Operations(withFiles bool) []any {
 		decl("like", "投稿にいいねする。event に会話の e番号。"+endTurn,
 			gate.Obj{"type": "object", "required": []any{"event"}, "properties": gate.Obj{"event": ref("対象の投稿の短縮参照（例 e7）")}},
 			true, "conversation_bound"),
-		decl("post", "返信ではない新しい投稿をする。text に本文。ツールを使わずに本文を書いても同じく新規投稿になる。"+endTurn, post, true, "conversation_bound"),
+		decl("post", "誰への返信でもない、新しい投稿をする（相手のスレッドには出ない）。text に本文。ツールを使わずに本文を書いても同じく新規投稿になる。"+endTurn, post, true, "conversation_bound"),
 		decl("reply", "reply を呼ぶ応答では、地の文に何も書かない（最後の行の NO_REPLY だけは書いてよい）。地の文は別の投稿になるので、返信が二重になる。投稿に返信する。event に会話の e番号、text に返信本文。"+endTurn, reply, true, "conversation_bound"),
 		decl("repost", "投稿をリポストする。event に会話の e番号。"+endTurn,
 			gate.Obj{"type": "object", "required": []any{"event"}, "properties": gate.Obj{"event": ref("対象の投稿の短縮参照（例 e7）")}},
