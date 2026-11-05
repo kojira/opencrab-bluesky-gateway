@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -22,11 +23,7 @@ const endTurn = "結果は返らない。この呼び出しだけではターン
 // Operations is the hello declaration, sorted by name as core requires. withFiles adds the
 // `files` field (workspace images) to post and reply.
 func Operations(withFiles bool) []any {
-	decl := func(name, desc string, input gate.Obj, utterance bool, sharing string) gate.Obj {
-		dispatch, effect := "background", "state_change"
-		if utterance {
-			dispatch, effect = "utterance", "utterance"
-		}
+	declare := func(name, desc string, input gate.Obj, dispatch, effect, sharing string) gate.Obj {
 		return gate.Obj{
 			"name":            name,
 			"description":     desc,
@@ -40,6 +37,12 @@ func Operations(withFiles bool) []any {
 			"effect":          effect,
 		}
 	}
+	decl := func(name, desc string, input gate.Obj, utterance bool, sharing string) gate.Obj {
+		if utterance {
+			return declare(name, desc, input, "utterance", "utterance", sharing)
+		}
+		return declare(name, desc, input, "background", "state_change", sharing)
+	}
 	str := func(desc string) gate.Obj { return gate.Obj{"type": "string", "description": desc} }
 	ref := func(desc string) gate.Obj {
 		return gate.Obj{"type": "string", "description": desc, "format": "short-ref"}
@@ -51,26 +54,33 @@ func Operations(withFiles bool) []any {
 	}
 	post := gate.Obj{"type": "object", "required": []any{"text"}, "properties": gate.Obj{"text": str("投稿本文（300文字を超えるとスレッドに分けて投稿する）")}}
 	reply := gate.Obj{"type": "object", "required": []any{"event", "text"}, "properties": gate.Obj{
-		"event": ref("返信先の投稿の短縮参照（例 e7）"),
+		"event": ref("返信先の投稿（e番号か at:// の uri）"),
 		"text":  str("返信本文"),
 	}}
 	if withFiles {
 		post["properties"].(gate.Obj)["files"] = files
 		reply["properties"].(gate.Obj)["files"] = files
 	}
-	return []any{
+	ops := []gate.Obj{
 		decl("follow", "相手をフォローする。user に会話の u番号、または handle（例 alice.bsky.social）か did を渡す。",
 			gate.Obj{"type": "object", "required": []any{"user"}, "properties": gate.Obj{"user": ref("フォローする相手（u番号、handle、did）")}},
 			false, "agent_bound"),
-		decl("like", "投稿にいいねする。event に会話の e番号。"+endTurn,
-			gate.Obj{"type": "object", "required": []any{"event"}, "properties": gate.Obj{"event": ref("対象の投稿の短縮参照（例 e7）")}},
+		decl("like", "投稿にいいねする。event に会話の e番号か at:// の uri（read_* の結果に出る）。"+endTurn,
+			gate.Obj{"type": "object", "required": []any{"event"}, "properties": gate.Obj{"event": ref("対象の投稿（e番号か at:// の uri）")}},
 			true, "conversation_bound"),
 		decl("post", "誰への返信でもない、新しい投稿をする（相手のスレッドには出ない）。text に本文。ツールを使わずに本文を書いても同じく新規投稿になる。"+endTurn, post, true, "conversation_bound"),
-		decl("reply", "reply を呼ぶ応答では、地の文に何も書かない（最後の行の NO_REPLY だけは書いてよい）。地の文は別の投稿になるので、返信が二重になる。投稿に返信する。event に会話の e番号、text に返信本文。"+endTurn, reply, true, "conversation_bound"),
-		decl("repost", "投稿をリポストする。event に会話の e番号。"+endTurn,
-			gate.Obj{"type": "object", "required": []any{"event"}, "properties": gate.Obj{"event": ref("対象の投稿の短縮参照（例 e7）")}},
+		decl("reply", "reply を呼ぶ応答では、地の文に何も書かない（最後の行の NO_REPLY だけは書いてよい）。地の文は別の投稿になるので、返信が二重になる。投稿に返信する。event に会話の e番号か at:// の uri（read_* の結果に出る）、text に返信本文。"+endTurn, reply, true, "conversation_bound"),
+		decl("repost", "投稿をリポストする。event に会話の e番号か at:// の uri（read_* の結果に出る）。"+endTurn,
+			gate.Obj{"type": "object", "required": []any{"event"}, "properties": gate.Obj{"event": ref("対象の投稿（e番号か at:// の uri）")}},
 			true, "conversation_bound"),
 	}
+	ops = append(ops, readOperations(declare)...)
+	sort.Slice(ops, func(i, j int) bool { return ops[i]["name"].(string) < ops[j]["name"].(string) })
+	out := make([]any, len(ops))
+	for i, o := range ops {
+		out[i] = o
+	}
+	return out
 }
 
 // Poster is the part of the Bluesky client the operations use (a stub in tests).
@@ -79,6 +89,7 @@ type Poster interface {
 	Like(ctx context.Context, uri string) (string, error)
 	Repost(ctx context.Context, uri string) (string, error)
 	Follow(ctx context.Context, who string) (string, error)
+	Reader
 }
 
 // Ops runs core's invokes and says for one bot. Bsky is nil while the bot has no account.
@@ -88,6 +99,10 @@ type Ops struct {
 }
 
 var errNoAccount = errors.New("the bot has no Bluesky account yet")
+
+// isPostURI reports whether an event is a post uri: core resolves e-numbers to uris, and the
+// read operations show uris the model can pass as they are. One check for every op taking event.
+func isPostURI(event string) bool { return strings.HasPrefix(event, "at://") }
 
 func (o *Ops) Say(ctx context.Context, _ string, text, replyTarget string) error {
 	if o.Bsky == nil {
@@ -115,9 +130,12 @@ func (o *Ops) Invoke(ctx context.Context, _ string, operation string, raw json.R
 	if o.Bsky == nil || json.Unmarshal(raw, &p) != nil {
 		return nil, gate.OutcomeRejected
 	}
+	if result, outcome, ok := o.read(ctx, operation, raw); ok {
+		return result, outcome
+	}
 	switch operation {
 	case "post", "reply":
-		if operation == "reply" && !strings.HasPrefix(p.Event, "at://") {
+		if operation == "reply" && !isPostURI(p.Event) {
 			return nil, gate.OutcomeRejected
 		}
 		images, err := o.images(p.Files)
@@ -137,7 +155,7 @@ func (o *Ops) Invoke(ctx context.Context, _ string, operation string, raw json.R
 		}
 		return nil, gate.OutcomeOk
 	case "like", "repost":
-		if !strings.HasPrefix(p.Event, "at://") {
+		if !isPostURI(p.Event) {
 			return nil, gate.OutcomeRejected
 		}
 		var err error

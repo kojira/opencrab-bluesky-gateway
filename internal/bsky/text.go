@@ -70,6 +70,19 @@ func Facets(ctx context.Context, text string, resolve func(context.Context, stri
 // Graphemes counts user-perceived characters, the unit of Bluesky's limit.
 func Graphemes(s string) int { return uniseg.GraphemeClusterCount(s) }
 
+// graphemeOffset is the byte offset after the first n graphemes (len(s) if s is shorter).
+func graphemeOffset(s string, n int) int {
+	end := 0
+	g := uniseg.NewGraphemes(s)
+	for i := 0; i < n && g.Next(); i++ {
+		_, end = g.Positions()
+	}
+	return end
+}
+
+// CutGraphemes is the first n graphemes of s.
+func CutGraphemes(s string, n int) string { return s[:graphemeOffset(s, n)] }
+
 // SplitThread cuts text into parts of at most limit graphemes, preferring line breaks, then
 // sentence ends, then spaces. Links are never cut.
 func SplitThread(text string, limit int) []string {
@@ -94,12 +107,7 @@ func SplitThread(text string, limit int) []string {
 
 // cutPoint is a byte offset where the first part (≤ limit graphemes) ends.
 func cutPoint(text string, limit int) int {
-	// byte offset after `limit` graphemes
-	hard := 0
-	g := uniseg.NewGraphemes(text)
-	for n := 0; n < limit && g.Next(); n++ {
-		_, hard = g.Positions()
-	}
+	hard := graphemeOffset(text, limit)
 	window := text[:hard]
 	// do not end inside a link
 	for _, m := range linkRe.FindAllStringIndex(text, -1) {

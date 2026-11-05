@@ -165,8 +165,9 @@ func TestDeliverKeepsUndeliveredWhenCoreIsAway(t *testing.T) {
 // --- operations ---
 
 type fakePoster struct {
-	calls []string
-	err   error
+	Reader // reads go to a bsky.Client on the stub XRPC server (read_test.go)
+	calls  []string
+	err    error
 }
 
 func (f *fakePoster) Post(_ context.Context, text, replyTo string, images []bsky.Image) ([]string, error) {
