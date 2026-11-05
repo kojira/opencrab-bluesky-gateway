@@ -267,13 +267,17 @@ type ReplyRef struct {
 	Parent StrongRef `json:"parent"`
 }
 
-// PostView is a post from getPosts.
+// PostView is a post as the feed APIs show it (getPosts, feeds, search, threads).
 type PostView struct {
-	URI    string          `json:"uri"`
-	CID    string          `json:"cid"`
-	Author Author          `json:"author"`
-	Record json.RawMessage `json:"record"`
-	Embed  json.RawMessage `json:"embed"`
+	URI         string          `json:"uri"`
+	CID         string          `json:"cid"`
+	Author      Author          `json:"author"`
+	Record      json.RawMessage `json:"record"`
+	Embed       json.RawMessage `json:"embed"`
+	ReplyCount  int             `json:"replyCount"`
+	RepostCount int             `json:"repostCount"`
+	LikeCount   int             `json:"likeCount"`
+	IndexedAt   string          `json:"indexedAt"`
 }
 
 func (c *Client) GetPosts(ctx context.Context, uris []string) ([]PostView, error) {

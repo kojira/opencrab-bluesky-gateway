@@ -28,12 +28,27 @@ core とは core の gate ソケット（Unix ドメインソケット）で、g
 | 操作 | 引数 | 内容 |
 |---|---|---|
 | `post` | `text`、`files`（任意） | 新しい投稿。300 文字（書記素）を超えると、スレッドに分けて投稿します。 |
-| `reply` | `event`（e番号）、`text`、`files`（任意） | 返信。スレッドの root と parent を正しく付けます。 |
-| `like` | `event` | いいね |
-| `repost` | `event` | リポスト |
+| `reply` | `event`（e番号か at:// の uri）、`text`、`files`（任意） | 返信。スレッドの root と parent を正しく付けます。 |
+| `like` | `event`（e番号か at:// の uri） | いいね |
+| `repost` | `event`（e番号か at:// の uri） | リポスト |
 | `follow` | `user`（u番号、ハンドル、DID） | フォロー |
 
 - 本文の URL と、`@ハンドル`（DID が引けるもの）は、リンクとして表示されます。
+### 読む（エージェントが自分で呼ぶ操作）
+
+ハートビートや定期実行のターンで、エージェントが自分で呼んで読みます。結果は同じターンでエージェントに返ります。何も投稿しません。
+
+| 操作 | 引数 | 内容 |
+|---|---|---|
+| `read_timeline` | `limit`、`cursor`（どちらも任意） | 自分のホームタイムライン |
+| `read_author_feed` | `user`（u番号、ハンドル、DID）、`limit`、`cursor` | ある人の投稿 |
+| `search_posts` | `query`、`limit`、`cursor` | 投稿の検索 |
+| `read_thread` | `event`（e番号か at:// の uri）、`depth` | スレッド（親と返信。本文は省略しない） |
+
+- 投稿ごとに、作者、時刻（UTC）、返信・リポスト・いいねの数、本文、at:// の uri を返します。uri は `reply`・`like`・`repost` の `event` にそのまま渡せます。
+- 一覧の本文は 150 文字（書記素）までです。全文は `read_thread` で読みます。
+- `limit` の既定は 8 件（最大 100）です。core はゲートウェイの操作の結果を約 2,500 トークンまで会話に入れ、超えるとファイルに保存して場所だけを返します。既定の件数はそこに収まる目安です。続きは `next_cursor` を `cursor` に渡して読みます。
+
 - `files` は、エージェントの作業フォルダの画像です（JPEG・PNG・WebP・GIF、4 枚まで、1 枚 1MB まで）。`attachment_outbox_root` を設定したときだけ使えます。
 
 ## 設定ファイル
