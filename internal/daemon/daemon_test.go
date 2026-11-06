@@ -258,3 +258,13 @@ func TestImagesComeFromVerifiedOutboxCopies(t *testing.T) {
 }
 
 func itoa(n int) string { b, _ := json.Marshal(n); return string(b) }
+
+// D-1119: a subtask is the agent itself, so every Bluesky op is offered to subtasks too.
+func TestEveryOperationIsOfferedToSubtasks(t *testing.T) {
+	for _, op := range Operations(true) {
+		o := op.(gate.Obj)
+		if o["sub_engine"] != "allowed" {
+			t.Fatalf("%v: sub_engine = %v, want allowed", o["name"], o["sub_engine"])
+		}
+	}
+}

@@ -32,7 +32,7 @@ func Operations(withFiles bool) []any {
 			"callback_schema": nil,
 			"authorization":   gate.Obj{"allowed_callers": []any{"co_agent", "guest", "owner", "trusted"}},
 			"dispatch":        dispatch,
-			"sub_engine":      "not_exposed",
+			"sub_engine":      "allowed", // a subtask is the agent itself (kojira 2026-11-06)
 			"sharing":         sharing,
 			"effect":          effect,
 		}
