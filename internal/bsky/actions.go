@@ -24,18 +24,15 @@ func now() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
 // ReplyRefFor gives the reply reference of an answer to the post at uri: the parent is that post,
 // the root is its thread root (the post itself when it is not a reply).
 func (c *Client) ReplyRefFor(ctx context.Context, uri string) (*ReplyRef, error) {
-	posts, err := c.GetPosts(ctx, []string{uri})
+	post, err := c.GetPost(ctx, uri)
 	if err != nil {
 		return nil, err
 	}
-	if len(posts) == 0 {
-		return nil, &APIError{Status: 404, Code: "NotFound", Message: "post not found"}
-	}
-	parent := StrongRef{URI: posts[0].URI, CID: posts[0].CID}
+	parent := StrongRef{URI: post.URI, CID: post.CID}
 	var rec struct {
 		Reply *ReplyRef `json:"reply"`
 	}
-	_ = json.Unmarshal(posts[0].Record, &rec)
+	_ = json.Unmarshal(post.Record, &rec)
 	root := parent
 	if rec.Reply != nil && rec.Reply.Root.URI != "" {
 		root = rec.Reply.Root
@@ -112,14 +109,11 @@ func (c *Client) Post(ctx context.Context, text, replyTo string, images []Image)
 }
 
 func (c *Client) subjectRef(ctx context.Context, uri string) (StrongRef, error) {
-	posts, err := c.GetPosts(ctx, []string{uri})
+	post, err := c.GetPost(ctx, uri)
 	if err != nil {
 		return StrongRef{}, err
 	}
-	if len(posts) == 0 {
-		return StrongRef{}, &APIError{Status: 404, Code: "NotFound", Message: "post not found"}
-	}
-	return StrongRef{URI: posts[0].URI, CID: posts[0].CID}, nil
+	return StrongRef{URI: post.URI, CID: post.CID}, nil
 }
 
 func (c *Client) Like(ctx context.Context, uri string) (string, error) {

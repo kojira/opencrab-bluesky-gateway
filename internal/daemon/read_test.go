@@ -63,7 +63,18 @@ func (s *feedStub) serve(w http.ResponseWriter, r *http.Request) {
 				"replies": []any{map[string]any{"$type": "app.bsky.feed.defs#threadViewPost", "post": post("at://did:plc:dan/app.bsky.feed.post/d", "dan", "", "deeper", 0)}}}},
 		}})
 	case "app.bsky.feed.getPosts":
+		if q.Get("uris") == resolvedPost {
+			reply(map[string]any{"posts": []any{postWithImages()}})
+			return
+		}
 		reply(map[string]any{"posts": []any{post(q.Get("uris"), "alice", "Alice", "x", 0)}})
+	case "com.atproto.identity.resolveHandle":
+		if q.Get("handle") == "kojira.io" {
+			reply(map[string]string{"did": "did:plc:kojira"})
+			return
+		}
+		w.WriteHeader(400)
+		reply(map[string]string{"error": "InvalidRequest", "message": "Unable to resolve handle"})
 	case "com.atproto.repo.createRecord":
 		reply(map[string]string{"uri": "at://did:plc:bot/x/1", "cid": "c"})
 	default:
@@ -201,8 +212,85 @@ func TestDefaultPageFitsCoreToolResultSize(t *testing.T) {
 		_ = json.Unmarshal([]byte(`{"uri":"at://did:plc:aaaaaaaaaaaaaaaaaaaaaaaa/app.bsky.feed.post/3mzly7f3mp22d","author":{"handle":"someone.bsky.social","displayName":"長い表示名のアカウント"},"record":{"text":"`+strings.Repeat("あ", 300)+`","createdAt":"2026-11-06T01:02:03Z"}}`), &p)
 		items = append(items, bsky.FeedItem{Post: p})
 	}
-	out, _ := json.Marshal(gate.Obj{"posts": RenderFeed(items), "next_cursor": "3mzly7f3mp22d::bafyreidpm7sfb7ljpsjgtxxf6n2zti2l5mc7lzk67jqx"})
+	text, images := RenderFeed(items)
+	out, _ := json.Marshal(gate.Obj{"posts": text, "images": images, "next_cursor": "3mzly7f3mp22d::bafyreidpm7sfb7ljpsjgtxxf6n2zti2l5mc7lzk67jqx"})
 	if n := estimateTokens(string(out)); n > 2_000 {
 		t.Fatalf("default page is about %d tokens; it would not fit core's tool-result size", n)
+	}
+}
+
+const resolvedPost = "at://did:plc:kojira/app.bsky.feed.post/3n2abc"
+
+// postWithImages is kojira's reply with two photos that also quotes a post.
+func postWithImages() map[string]any {
+	p := post(resolvedPost, "kojira", "kojira", "にんたま麦めしチキン！", 5)
+	p["author"] = map[string]any{"did": "did:plc:kojira", "handle": "kojira.io", "displayName": "kojira"}
+	p["record"] = map[string]any{
+		"$type": "app.bsky.feed.post", "text": "にんたま麦めしチキン！", "createdAt": "2026-11-12T03:04:05.000Z",
+		"reply": map[string]any{
+			"root":   map[string]any{"uri": "at://did:plc:kojira/app.bsky.feed.post/root", "cid": "c"},
+			"parent": map[string]any{"uri": "at://did:plc:kojira/app.bsky.feed.post/parent", "cid": "c"},
+		},
+		"embed": map[string]any{
+			"$type":  "app.bsky.embed.recordWithMedia",
+			"record": map[string]any{"record": map[string]any{"uri": "at://did:plc:alice/app.bsky.feed.post/q", "cid": "c"}},
+			"media": map[string]any{"$type": "app.bsky.embed.images", "images": []any{
+				map[string]any{"image": map[string]any{"ref": map[string]any{"$link": "bafyimg1"}, "mimeType": "image/jpeg"}},
+				map[string]any{"image": map[string]any{"ref": map[string]any{"$link": "bafyimg2"}, "mimeType": "image/jpeg"}},
+			}},
+		},
+	}
+	return p
+}
+
+// kojira: 「resolve的なツールを使って任意の投稿の詳細を確認できるようにして」. resolve gives the whole
+// post with its reply parent/root, the quoted post and the image URLs, whether the agent names it
+// by an at:// uri or by a bsky.app URL; an e-number reaches the gateway as the at:// uri (core
+// resolves the short-ref field).
+func TestResolveShowsAPostWithItsParentQuoteAndImages(t *testing.T) {
+	_, o := newReadOps(t)
+	wantImages := []any{
+		"https://cdn.bsky.app/img/feed_fullsize/plain/did:plc:kojira/bafyimg1@jpeg",
+		"https://cdn.bsky.app/img/feed_fullsize/plain/did:plc:kojira/bafyimg2@jpeg",
+	}
+	for _, ref := range []string{resolvedPost, "https://bsky.app/profile/kojira.io/post/3n2abc", "https://bsky.app/profile/did:plc:kojira/post/3n2abc"} {
+		res := invokeRead(t, o, "resolve", `{"ref":"`+ref+`"}`)
+		if res["uri"] != resolvedPost || res["reply_parent"] != "at://did:plc:kojira/app.bsky.feed.post/parent" ||
+			res["reply_root"] != "at://did:plc:kojira/app.bsky.feed.post/root" || res["quote"] != "at://did:plc:alice/app.bsky.feed.post/q" {
+			t.Fatalf("%s: %v", ref, res)
+		}
+		got, _ := json.Marshal(res["images"])
+		want, _ := json.Marshal(wantImages)
+		if string(got) != string(want) {
+			t.Fatalf("%s: images %s", ref, got)
+		}
+		text := res["post"].(string)
+		if !strings.Contains(text, "にんたま麦めしチキン！") || !strings.Contains(text, "🖼 "+wantImages[0].(string)) {
+			t.Fatalf("%s: post %q", ref, text)
+		}
+	}
+	if _, out := o.Invoke(context.Background(), "s", "resolve", json.RawMessage(`{"ref":"https://example.com/x"}`)); out != gate.OutcomeRejected {
+		t.Fatal("a non-post URL was accepted")
+	}
+	for _, op := range Operations(false) {
+		d := op.(gate.Obj)
+		if d["name"] == "resolve" {
+			if d["input_schema"].(gate.Obj)["properties"].(gate.Obj)["ref"].(gate.Obj)["format"] != "short-ref" {
+				t.Fatal("resolve ref is not a short-ref field (core would not turn e-numbers into uris)")
+			}
+			return
+		}
+	}
+	t.Fatal("resolve not declared")
+}
+
+// read_* results carry each post's image URLs too, in the same images field.
+func TestReadResultsListImageURLs(t *testing.T) {
+	var p bsky.PostView
+	raw, _ := json.Marshal(postWithImages())
+	_ = json.Unmarshal(raw, &p)
+	text, images := RenderFeed([]bsky.FeedItem{{Post: p}})
+	if len(images) != 2 || !strings.Contains(text, "🖼 "+images[1]) {
+		t.Fatalf("images %v\n%s", images, text)
 	}
 }

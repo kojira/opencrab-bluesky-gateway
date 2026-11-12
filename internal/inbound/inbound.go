@@ -75,44 +75,6 @@ type postRecord struct {
 	Embed json.RawMessage `json:"embed"`
 }
 
-type blobRef struct {
-	Ref struct {
-		Link string `json:"$link"`
-	} `json:"ref"`
-	MimeType string `json:"mimeType"`
-}
-
-type imagesEmbed struct {
-	Type   string `json:"$type"`
-	Images []struct {
-		Image blobRef `json:"image"`
-	} `json:"images"`
-	Media *imagesEmbed `json:"media"`
-}
-
-// ImageURLs gives the CDN URLs of a post record's images (images or recordWithMedia).
-func ImageURLs(authorDID string, embed json.RawMessage) []string {
-	if len(embed) == 0 {
-		return nil
-	}
-	var e imagesEmbed
-	if json.Unmarshal(embed, &e) != nil {
-		return nil
-	}
-	imgs := e.Images
-	if e.Media != nil {
-		imgs = e.Media.Images
-	}
-	var out []string
-	for _, img := range imgs {
-		if img.Image.Ref.Link == "" {
-			continue
-		}
-		out = append(out, "https://cdn.bsky.app/img/feed_fullsize/plain/"+authorDID+"/"+img.Image.Ref.Link+"@jpeg")
-	}
-	return out
-}
-
 // Map turns one notification into a said for the bot's session. ok is false for notifications
 // that are not delivered: other reasons, the bot's own posts, and empty posts.
 func Map(n bsky.Notification, selfDID, agentID string, owners []string) (gate.Said, bool) {
@@ -130,7 +92,7 @@ func Map(n bsky.Notification, selfDID, agentID string, owners []string) (gate.Sa
 		Text:          rec.Text,
 		SystemContext: ReplyContext,
 	}
-	for _, u := range ImageURLs(n.Author.DID, rec.Embed) {
+	for _, u := range bsky.ImageURLs(n.Author.DID, rec.Embed) {
 		s.Attachments = append(s.Attachments, gate.ImageURL(u))
 	}
 	if rec.Reply != nil && rec.Reply.Parent.URI != "" {

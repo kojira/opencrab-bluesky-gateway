@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -17,6 +18,8 @@ type Reader interface {
 	AuthorFeed(ctx context.Context, actor string, limit int, cursor string) (*bsky.FeedPage, error)
 	SearchPosts(ctx context.Context, query string, limit int, cursor string) (*bsky.FeedPage, error)
 	Thread(ctx context.Context, uri string, depth int) ([]bsky.ThreadPost, error)
+	PostURI(ctx context.Context, ref string) (string, error)
+	GetPost(ctx context.Context, uri string) (bsky.PostView, error)
 }
 
 const (
@@ -31,7 +34,7 @@ const (
 )
 
 // readSize is the size note shared by the read operations' descriptions.
-const readSize = "結果は同じターンで返る。投稿ごとに 作者・時刻(UTC)・返信/リポスト/いいね数・本文・at:// の uri を返す。uri は reply / like / repost の event にそのまま渡せる。1 回の結果がおよそ 2,500 トークンを超えると、本文は会話に入らずファイルに保存され、その場所だけが返る（ws_read で読める）。既定の limit は収まる目安。続きは結果の next_cursor を cursor に渡して読む。"
+const readSize = "結果は同じターンで返る。投稿ごとに 作者・時刻(UTC)・返信/リポスト/いいね数・本文・画像の https URL・at:// の uri を返し、結果の images に全画像の URL を並べる。uri は reply / like / repost の event にそのまま渡せる。1 回の結果がおよそ 2,500 トークンを超えると、本文は会話に入らずファイルに保存され、その場所だけが返る（ws_read で読める）。既定の limit は収まる目安。続きは結果の next_cursor を cursor に渡して読む。"
 
 func readOperations(decl func(name, desc string, input gate.Obj, dispatch, effect, sharing string) gate.Obj) []gate.Obj {
 	str := func(desc string) gate.Obj { return gate.Obj{"type": "string", "description": desc} }
@@ -42,6 +45,10 @@ func readOperations(decl func(name, desc string, input gate.Obj, dispatch, effec
 	limit := num(fmt.Sprintf("件数（既定 %d、最大 %d）", DefaultReadLimit, MaxReadLimit))
 	cursor := str("前の結果の next_cursor（続きを読むとき）")
 	return []gate.Obj{
+		decl("resolve", "e番号の投稿の詳細を取得する（会話で省略された全文や、投稿の画像・返信先・引用先を確かめる）。ref に会話の e番号、at:// の uri、または bsky.app の投稿 URL（https://bsky.app/profile/…/post/…）。結果は同じターンで返る: 作者・時刻(UTC)・返信/リポスト/いいね数・本文（全文）・返信先(parent)とスレッドの最初(root)の uri・引用先の uri・画像の https URL（images）。",
+			gate.Obj{"type": "object", "required": []any{"ref"}, "properties": gate.Obj{
+				"ref": ref("投稿（e番号、at:// の uri、bsky.app の投稿 URL）"),
+			}}, "inline", "read_only", "conversation_bound"),
 		decl("read_author_feed", "ある人の投稿（リポストを含む）を新しい順に読む。user に会話の u番号、handle（例 alice.bsky.social）か did。"+readSize,
 			gate.Obj{"type": "object", "required": []any{"user"}, "properties": gate.Obj{
 				"user": ref("読む相手（u番号、handle、did）"), "limit": limit, "cursor": cursor,
@@ -62,6 +69,7 @@ func readOperations(decl func(name, desc string, input gate.Obj, dispatch, effec
 }
 
 type readParams struct {
+	Ref    string `json:"ref"`
 	User   string `json:"user"`
 	Query  string `json:"query"`
 	Event  string `json:"event"`
@@ -102,6 +110,8 @@ func (o *Ops) read(ctx context.Context, operation string, raw json.RawMessage) (
 			return nil, gate.OutcomeRejected, true
 		}
 		page, err = o.Bsky.SearchPosts(ctx, p.Query, limit, p.Cursor)
+	case "resolve":
+		return o.resolve(ctx, p.Ref)
 	case "read_thread":
 		if !isPostURI(p.Event) {
 			return nil, gate.OutcomeRejected, true
@@ -110,27 +120,32 @@ func (o *Ops) read(ctx context.Context, operation string, raw json.RawMessage) (
 		if err != nil {
 			return nil, outcomeOf(err), true
 		}
-		return gate.Obj{"posts": RenderThread(posts)}, gate.OutcomeOk, true
+		text, images := RenderThread(posts)
+		return gate.Obj{"posts": text, "images": images}, gate.OutcomeOk, true
 	default:
 		return nil, 0, false
 	}
 	if err != nil {
 		return nil, outcomeOf(err), true
 	}
-	return gate.Obj{"posts": RenderFeed(page.Posts), "next_cursor": page.Cursor}, gate.OutcomeOk, true
+	text, images := RenderFeed(page.Posts)
+	return gate.Obj{"posts": text, "images": images, "next_cursor": page.Cursor}, gate.OutcomeOk, true
 }
 
 type postText struct {
 	Text      string          `json:"text"`
 	CreatedAt string          `json:"createdAt"`
 	Reply     json.RawMessage `json:"reply"`
-	Embed     struct {
-		Type   string            `json:"$type"`
-		Images []json.RawMessage `json:"images"`
-		Media  *struct {
-			Images []json.RawMessage `json:"images"`
-		} `json:"media"`
-	} `json:"embed"`
+	Embed     json.RawMessage `json:"embed"`
+}
+
+// embedType is the $type of a post record's embed ("" when it has none).
+func embedType(embed json.RawMessage) string {
+	var e struct {
+		Type string `json:"$type"`
+	}
+	_ = json.Unmarshal(embed, &e)
+	return e.Type
 }
 
 func shortTime(s string) string {
@@ -141,26 +156,24 @@ func shortTime(s string) string {
 	return t.UTC().Format("2006-01-02 15:04")
 }
 
-// renderPost is one post: a header line, the text, and the uri. full keeps the whole text.
-func renderPost(p bsky.PostView, indent string, full bool) string {
+// renderPost is one post: a header line, the text, a line per image URL, and the uri. full keeps
+// the whole text. It also gives the post's image URLs (bsky.ImageURLs, the one place for them).
+func renderPost(p bsky.PostView, indent string, full bool) (string, []string) {
 	var rec postText
 	_ = json.Unmarshal(p.Record, &rec)
 	when := rec.CreatedAt
 	if when == "" {
 		when = p.IndexedAt
 	}
+	images := bsky.ImageURLs(p.Author.DID, rec.Embed)
 	var marks []string
 	if len(rec.Reply) > 0 && string(rec.Reply) != "null" {
 		marks = append(marks, "返信")
 	}
-	images := len(rec.Embed.Images)
-	if rec.Embed.Media != nil {
-		images += len(rec.Embed.Media.Images)
+	if len(images) > 0 {
+		marks = append(marks, fmt.Sprintf("画像%d枚", len(images)))
 	}
-	if images > 0 {
-		marks = append(marks, fmt.Sprintf("画像%d枚", images))
-	}
-	if strings.Contains(rec.Embed.Type, "embed.record") {
+	if strings.Contains(embedType(rec.Embed), "embed.record") {
 		marks = append(marks, "引用あり")
 	}
 	head := fmt.Sprintf("%s%s %s ↩%d 🔁%d ♥%d", indent, p.Author.Label(), shortTime(when), p.ReplyCount, p.RepostCount, p.LikeCount)
@@ -172,39 +185,110 @@ func renderPost(p bsky.PostView, indent string, full bool) string {
 		text = bsky.CutGraphemes(text, PostTextShown) + "…（続きは read_thread）"
 	}
 	text = strings.ReplaceAll(text, "\n", "\n"+indent)
-	return head + "\n" + indent + text + "\n" + indent + p.URI
+	out := head + "\n" + indent + text
+	for _, u := range images {
+		out += "\n" + indent + "🖼 " + u
+	}
+	return out + "\n" + indent + p.URI, images
 }
 
-// RenderFeed is the text of a page of posts, newest first as the API returns them.
-func RenderFeed(items []bsky.FeedItem) string {
+// RenderFeed is the text of a page of posts, newest first as the API returns them, and the image
+// URLs of all of them.
+func RenderFeed(items []bsky.FeedItem) (string, []string) {
+	images := []string{}
 	if len(items) == 0 {
-		return "（投稿はありません）"
+		return "（投稿はありません）", images
 	}
 	parts := make([]string, 0, len(items))
 	for _, it := range items {
-		s := renderPost(it.Post, "", false)
+		s, imgs := renderPost(it.Post, "", false)
+		images = append(images, imgs...)
 		if it.RepostBy != nil {
 			s = "🔁 " + it.RepostBy.Label() + " がリポスト\n" + s
 		}
 		parts = append(parts, s)
 	}
-	return strings.Join(parts, "\n\n")
+	return strings.Join(parts, "\n\n"), images
 }
 
 // RenderThread is a thread: parents, the requested post (marked ▶), then replies indented by
-// depth. Texts are whole.
-func RenderThread(posts []bsky.ThreadPost) string {
+// depth. Texts are whole. It also gives the image URLs of all the posts.
+func RenderThread(posts []bsky.ThreadPost) (string, []string) {
+	images := []string{}
 	parts := make([]string, 0, len(posts))
 	for _, tp := range posts {
 		indent := ""
 		if tp.Depth > 0 {
 			indent = strings.Repeat("  ", tp.Depth)
 		}
-		s := renderPost(tp.Post, indent, true)
+		s, imgs := renderPost(tp.Post, indent, true)
+		images = append(images, imgs...)
 		if tp.Depth == 0 {
 			s = "▶ " + s
 		}
 		parts = append(parts, s)
 	}
-	return strings.Join(parts, "\n\n")
+	return strings.Join(parts, "\n\n"), images
+}
+
+// resolve is one post in full: the rendered post plus its reply parent and root, the post it
+// quotes, and its image URLs (the same rendering and image URLs as read_*).
+func (o *Ops) resolve(ctx context.Context, ref string) (any, gate.Outcome, bool) {
+	if strings.TrimSpace(ref) == "" {
+		return nil, gate.OutcomeRejected, true
+	}
+	uri, err := o.Bsky.PostURI(ctx, ref)
+	if err != nil {
+		var apiErr *bsky.APIError
+		if errors.As(err, &apiErr) {
+			return nil, outcomeOf(err), true
+		}
+		return nil, gate.OutcomeRejected, true
+	}
+	post, err := o.Bsky.GetPost(ctx, uri)
+	if err != nil {
+		return nil, outcomeOf(err), true
+	}
+	text, images := renderPost(post, "", true)
+	var rec struct {
+		Reply *bsky.ReplyRef  `json:"reply"`
+		Embed json.RawMessage `json:"embed"`
+	}
+	_ = json.Unmarshal(post.Record, &rec)
+	out := gate.Obj{"post": text, "uri": post.URI, "images": images}
+	if rec.Reply != nil {
+		out["reply_parent"] = rec.Reply.Parent.URI
+		out["reply_root"] = rec.Reply.Root.URI
+	}
+	if q := quotedURI(rec.Embed); q != "" {
+		out["quote"] = q
+	}
+	return out, gate.OutcomeOk, true
+}
+
+// quotedURI is the uri of the post a record embeds (app.bsky.embed.record, or the record of
+// app.bsky.embed.recordWithMedia), or "".
+func quotedURI(embed json.RawMessage) string {
+	var e struct {
+		Record json.RawMessage `json:"record"`
+	}
+	if len(embed) == 0 || json.Unmarshal(embed, &e) != nil || len(e.Record) == 0 {
+		return ""
+	}
+	var ref struct {
+		URI    string `json:"uri"`
+		Record *struct {
+			URI string `json:"uri"`
+		} `json:"record"`
+	}
+	if json.Unmarshal(e.Record, &ref) != nil {
+		return ""
+	}
+	if ref.URI != "" {
+		return ref.URI
+	}
+	if ref.Record != nil {
+		return ref.Record.URI
+	}
+	return ""
 }

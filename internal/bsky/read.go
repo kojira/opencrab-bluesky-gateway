@@ -145,3 +145,39 @@ func (c *Client) Thread(ctx context.Context, uri string, depth int) ([]ThreadPos
 	walk(out.Thread.Replies, 1)
 	return posts, nil
 }
+
+// PostURI turns a post reference into its at:// uri: an at:// uri as it is, or a bsky.app post URL
+// (https://bsky.app/profile/<handle or did>/post/<rkey>), resolving the handle.
+func (c *Client) PostURI(ctx context.Context, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if strings.HasPrefix(ref, "at://") {
+		return ref, nil
+	}
+	u, err := url.Parse(ref)
+	if err != nil || (u.Host != "bsky.app" && u.Host != "www.bsky.app") {
+		return "", fmt.Errorf("bsky: not a post: %s", ref)
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 4 || parts[0] != "profile" || parts[2] != "post" || parts[1] == "" || parts[3] == "" {
+		return "", fmt.Errorf("bsky: not a post URL: %s", ref)
+	}
+	did := parts[1]
+	if !strings.HasPrefix(did, "did:") {
+		if did, err = c.ResolveHandle(ctx, did); err != nil {
+			return "", err
+		}
+	}
+	return "at://" + did + "/app.bsky.feed.post/" + parts[3], nil
+}
+
+// GetPost is one post by its at:// uri (app.bsky.feed.getPosts); NotFound when it is gone.
+func (c *Client) GetPost(ctx context.Context, uri string) (PostView, error) {
+	posts, err := c.GetPosts(ctx, []string{uri})
+	if err != nil {
+		return PostView{}, err
+	}
+	if len(posts) == 0 {
+		return PostView{}, &APIError{Status: 404, Code: "NotFound", Message: "post not found"}
+	}
+	return posts[0], nil
+}
