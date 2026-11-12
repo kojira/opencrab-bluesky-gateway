@@ -1,8 +1,14 @@
 package bsky
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/jpeg"
+	"image/png"
+	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +23,12 @@ type stub struct {
 	created []map[string]any
 	logins  int
 	expired bool
+	uploads []upload
+}
+
+type upload struct {
+	mime string
+	data []byte
 }
 
 func newStub(t *testing.T) (*stub, *Client) {
@@ -77,6 +89,8 @@ func (s *stub) serve(w http.ResponseWriter, r *http.Request) {
 		n := len(s.created)
 		reply(map[string]string{"uri": "at://did:plc:bot/" + body["collection"].(string) + "/" + string(rune('a'+n-1)), "cid": "cid" + string(rune('a'+n-1))})
 	case "com.atproto.repo.uploadBlob":
+		data, _ := io.ReadAll(r.Body)
+		s.uploads = append(s.uploads, upload{r.Header.Get("Content-Type"), data})
 		reply(map[string]any{"blob": map[string]any{"$type": "blob", "ref": map[string]string{"$link": "bafyimg"}, "mimeType": r.Header.Get("Content-Type"), "size": r.ContentLength}})
 	default:
 		w.WriteHeader(404)
@@ -192,20 +206,62 @@ func TestExpiredTokenIsRefreshedOnce(t *testing.T) {
 	}
 }
 
-func TestImagesAreUploadedAndEmbedded(t *testing.T) {
+// D-1124: a generated image over Bluesky's blob limit is scaled down and re-encoded so the post
+// goes through; the embed keeps the picture's aspect ratio.
+func TestLargeImageIsShrunkToFitTheBlobLimit(t *testing.T) {
 	s, c := newStub(t)
-	_, err := c.Post(context.Background(), "photo", "", []Image{{Data: []byte("jpeg"), MimeType: "image/jpeg", Alt: "a.jpg"}})
-	if err != nil {
+	big := noisyPNG(t, 3000, 3000)
+	if len(big) <= MaxImageBytes {
+		t.Fatalf("fixture is only %d bytes", len(big))
+	}
+	if _, err := c.Post(context.Background(), "photo", "", []Image{{Data: big, MimeType: "image/png", Alt: "big.png"}}); err != nil {
 		t.Fatal(err)
 	}
-	embed := record(t, s, 0)["embed"].(map[string]any)
-	if embed["$type"] != "app.bsky.embed.images" {
-		t.Fatalf("embed %v", embed)
+	if len(s.uploads) != 1 || s.uploads[0].mime != "image/jpeg" || len(s.uploads[0].data) > MaxImageBytes {
+		t.Fatalf("uploaded %s, %d bytes", s.uploads[0].mime, len(s.uploads[0].data))
 	}
-	img := embed["images"].([]any)[0].(map[string]any)
+	cfg, err := jpeg.DecodeConfig(bytes.NewReader(s.uploads[0].data))
+	if err != nil || cfg.Width != cfg.Height || cfg.Width > MaxImageEdge {
+		t.Fatalf("uploaded image %dx%d (%v)", cfg.Width, cfg.Height, err)
+	}
+	img := record(t, s, 0)["embed"].(map[string]any)["images"].([]any)[0].(map[string]any)
+	ar := img["aspectRatio"].(map[string]any)
+	if ar["width"] != float64(cfg.Width) || ar["height"] != float64(cfg.Height) {
+		t.Fatalf("aspectRatio %v", ar)
+	}
+}
+
+func TestSmallImageIsUploadedUnchanged(t *testing.T) {
+	s, c := newStub(t)
+	small := noisyPNG(t, 40, 20)
+	if _, err := c.Post(context.Background(), "photo", "", []Image{{Data: small, MimeType: "image/png", Alt: "s.png"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.uploads) != 1 || s.uploads[0].mime != "image/png" || !bytes.Equal(s.uploads[0].data, small) {
+		t.Fatalf("uploaded %s, %d bytes", s.uploads[0].mime, len(s.uploads[0].data))
+	}
+	img := record(t, s, 0)["embed"].(map[string]any)["images"].([]any)[0].(map[string]any)
 	if img["image"].(map[string]any)["ref"].(map[string]any)["$link"] != "bafyimg" {
 		t.Fatalf("image %v", img)
 	}
+	if ar := img["aspectRatio"].(map[string]any); ar["width"] != float64(40) || ar["height"] != float64(20) {
+		t.Fatalf("aspectRatio %v", ar)
+	}
+}
+
+// noisyPNG is a w×h PNG of random pixels (incompressible, so a big one is over the limit).
+func noisyPNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	rng := rand.New(rand.NewPCG(1, 2))
+	for i := range img.Pix {
+		img.Pix[i] = byte(rng.Uint32())
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }
 
 func TestWrongPasswordIsPermanent(t *testing.T) {

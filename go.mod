@@ -4,6 +4,8 @@ go 1.26.3
 
 require github.com/rivo/uniseg v0.4.7
 
+require golang.org/x/image v0.48.0
+
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bluesky-social/indigo v0.0.0-20261030231632-15edb2cd5ba3
@@ -21,7 +23,7 @@ require (
 	gitlab.com/yawning/secp256k1-voi v0.0.0-20230925100816-f2616030848b // indirect
 	gitlab.com/yawning/tuplehash v0.0.0-20230713102510-df83abbf9a02 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
