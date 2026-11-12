@@ -34,7 +34,7 @@ const (
 )
 
 // readSize is the size note shared by the read operations' descriptions.
-const readSize = "結果は同じターンで返る。投稿ごとに 作者・時刻(UTC)・返信/リポスト/いいね数・本文・画像の https URL・at:// の uri を返し、結果の images に全画像の URL を並べる。uri は reply / like / repost の event にそのまま渡せる。1 回の結果がおよそ 2,500 トークンを超えると、本文は会話に入らずファイルに保存され、その場所だけが返る（ws_read で読める）。既定の limit は収まる目安。続きは結果の next_cursor を cursor に渡して読む。"
+const readSize = "結果は同じターンで返る。投稿ごとに 作者・時刻(UTC)・返信/リポスト/いいね数・本文・画像の https URL・at:// の uri を返し、結果の images に全画像の URL を並べる（view_image の url に渡すと画像を見られる）。uri は reply / like / repost の event にそのまま渡せる。1 回の結果がおよそ 2,500 トークンを超えると、本文は会話に入らずファイルに保存され、その場所だけが返る（ws_read で読める）。既定の limit は収まる目安。続きは結果の next_cursor を cursor に渡して読む。"
 
 func readOperations(decl func(name, desc string, input gate.Obj, dispatch, effect, sharing string) gate.Obj) []gate.Obj {
 	str := func(desc string) gate.Obj { return gate.Obj{"type": "string", "description": desc} }
@@ -45,7 +45,7 @@ func readOperations(decl func(name, desc string, input gate.Obj, dispatch, effec
 	limit := num(fmt.Sprintf("件数（既定 %d、最大 %d）", DefaultReadLimit, MaxReadLimit))
 	cursor := str("前の結果の next_cursor（続きを読むとき）")
 	return []gate.Obj{
-		decl("resolve", "e番号の投稿の詳細を取得する（会話で省略された全文や、投稿の画像・返信先・引用先を確かめる）。ref に会話の e番号、at:// の uri、または bsky.app の投稿 URL（https://bsky.app/profile/…/post/…）。結果は同じターンで返る: 作者・時刻(UTC)・返信/リポスト/いいね数・本文（全文）・返信先(parent)とスレッドの最初(root)の uri・引用先の uri・画像の https URL（images）。",
+		decl("resolve", "e番号の投稿の詳細を取得する（会話で省略された全文や、投稿の画像・返信先・引用先を確かめる）。ref に会話の e番号、at:// の uri、または bsky.app の投稿 URL（https://bsky.app/profile/…/post/…）。結果は同じターンで返る: 作者・時刻(UTC)・返信/リポスト/いいね数・本文（全文）・返信先(parent)とスレッドの最初(root)の uri・引用先の uri・画像の https URL（images。フルサイズ。view_image の url に渡すとその画像を見られる）。",
 			gate.Obj{"type": "object", "required": []any{"ref"}, "properties": gate.Obj{
 				"ref": ref("投稿（e番号、at:// の uri、bsky.app の投稿 URL）"),
 			}}, "inline", "read_only", "conversation_bound"),

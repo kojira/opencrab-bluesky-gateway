@@ -275,6 +275,9 @@ func TestResolveShowsAPostWithItsParentQuoteAndImages(t *testing.T) {
 	for _, op := range Operations(false) {
 		d := op.(gate.Obj)
 		if d["name"] == "resolve" {
+			if !strings.Contains(d["description"].(string), "view_image") {
+				t.Fatal("resolve does not tell the agent it can open the images with view_image")
+			}
 			if d["input_schema"].(gate.Obj)["properties"].(gate.Obj)["ref"].(gate.Obj)["format"] != "short-ref" {
 				t.Fatal("resolve ref is not a short-ref field (core would not turn e-numbers into uris)")
 			}
