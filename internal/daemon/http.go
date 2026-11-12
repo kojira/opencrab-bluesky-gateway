@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kojira/opencrab-bluesky-gateway/internal/bsky"
 	"github.com/kojira/opencrab-bluesky-gateway/internal/store"
 )
 
@@ -37,6 +39,8 @@ type botView struct {
 
 type oauthView struct {
 	DID string `json:"did"`
+	// DM: the session was granted the DM scope (otherwise logging in again grants it).
+	DM bool `json:"dm"`
 }
 
 func (d *Daemon) view(b store.Bot) botView {
@@ -51,7 +55,7 @@ func (d *Daemon) view(b store.Bot) botView {
 		OAuthAvailable: d.OAuth != nil,
 	}
 	if l, ok := d.oauthLinked(b.InstanceID); ok {
-		v.OAuth = &oauthView{DID: l.DID.String()}
+		v.OAuth = &oauthView{DID: l.DID.String(), DM: bsky.HasChatScope(d.OAuth.GrantedScopes(context.Background(), b.InstanceID))}
 	}
 	return v
 }

@@ -105,7 +105,15 @@ function botForm(b) {
         try { await api('POST', '/api/bots/' + b.instance_id + '/oauth/logout'); msg(b.label + ' をログアウトしました'); load(); }
         catch (e) { msg('ログアウトできません: ' + e.message, true); }
       };
-      oauthBox = el('div', { class: 'row' }, el('span', { class: 'ok' }, 'ログイン済み（OAuth）'), el('span', { class: 'id muted' }, b.oauth.did), out);
+      const relogin = el('button', {}, 'もう一度ログイン');
+      relogin.onclick = () => {
+        const h = (handle.value.trim() || b.handle || '').replace(/^@/, '');
+        location.href = '/oauth/login/' + encodeURIComponent(b.instance_id) + '?handle=' + encodeURIComponent(h);
+      };
+      const dm = b.oauth.dm
+        ? el('p', { class: 'muted ok' }, 'DM: 有効（オーナーからのDMだけを受け取り、そのDMに返事します）')
+        : el('div', {}, el('p', { class: 'muted err' }, 'DM: 再ログインが必要（「もう一度ログイン」で、Bluesky の画面でDMの許可も出ます）'), el('div', { class: 'row' }, relogin));
+      oauthBox = el('div', {}, el('div', { class: 'row' }, el('span', { class: 'ok' }, 'ログイン済み（OAuth）'), el('span', { class: 'id muted' }, b.oauth.did), out), dm);
     } else {
       const login = el('button', {}, 'Bluesky でログイン');
       login.onclick = () => {
@@ -129,7 +137,8 @@ function botForm(b) {
     el('div', { class: 'grid c2' },
       el('label', {}, '通知を見る間隔（秒）', poll),
       el('label', { class: 'check' }, enabled, '動かす')),
-    el('label', {}, 'オーナー（1 行に 1 つ、ハンドルか did）', owners),
+    el('label', {}, 'オーナー（1 行に 1 つ、ハンドルか did。編集して「保存」）', owners),
+    el('p', { class: 'muted' }, 'オーナーの投稿はオーナーとして扱われ、DM はオーナーからのものだけを受け取ります。'),
     el('div', { class: 'row' }, save, del));
 }
 function coreReason(e) {

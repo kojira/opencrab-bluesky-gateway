@@ -16,8 +16,9 @@ import (
 	"github.com/bluesky-social/indigo/atproto/syntax"
 )
 
-// Scopes are requested for every login: atproto plus app-password-level access.
-var Scopes = []string{"atproto", "transition:generic"}
+// Scopes are requested for every login: atproto, app-password-level access, and DMs
+// (transition:chat.bsky lets the session call chat.bsky.*; D-1123).
+var Scopes = []string{"atproto", "transition:generic", "transition:chat.bsky"}
 
 // Config is the "oauth" block of the gateway config.
 type Config struct {
@@ -165,6 +166,19 @@ func (l *Linker) Callback(ctx context.Context, params url.Values) (string, synta
 		return botID, "", err
 	}
 	return botID, sess.AccountDID, nil
+}
+
+// GrantedScopes are the scopes the bot's session was granted (nil when not linked).
+func (l *Linker) GrantedScopes(ctx context.Context, botID string) []string {
+	link, ok := l.Store.Linked(botID)
+	if !ok {
+		return nil
+	}
+	d, err := l.Store.GetSession(ctx, link.DID, link.SessionID)
+	if err != nil {
+		return nil
+	}
+	return d.Scopes
 }
 
 // Session is the bot's OAuth session, or ErrNoSession.

@@ -16,6 +16,7 @@ import (
 
 	"github.com/kojira/opencrab-bluesky-gateway/internal/bsky"
 	"github.com/kojira/opencrab-bluesky-gateway/internal/gate"
+	"github.com/kojira/opencrab-bluesky-gateway/internal/inbound"
 )
 
 const endTurn = "結果は返らない。この呼び出しだけではターンは終わらない。これで終えるなら、同じ応答の最後の行に NO_REPLY だけを書く。This call returns nothing. It does not end the turn by itself; to end the turn, write NO_REPLY alone on the final line of this same response."
@@ -68,6 +69,9 @@ func Operations(withFiles bool) []any {
 		decl("like", "投稿にいいねする。event に会話の e番号か at:// の uri（read_* の結果に出る）。"+endTurn,
 			gate.Obj{"type": "object", "required": []any{"event"}, "properties": gate.Obj{"event": ref("対象の投稿（e番号か at:// の uri）")}},
 			true, "conversation_bound"),
+		decl("send_dm", "このDMの相手にメッセージを送る（DMの会話の中だけで使える）。text に本文。地の文で書いても同じくこのDMに送られる。"+endTurn,
+			gate.Obj{"type": "object", "required": []any{"text"}, "properties": gate.Obj{"text": str("送る本文（1000文字を超えると分けて送る）")}},
+			true, "conversation_bound"),
 		decl("post", "誰への返信でもない、新しい投稿をする（相手のスレッドには出ない）。text に本文。ツールを使わずに本文を書いても同じく新規投稿になる。"+endTurn, post, true, "conversation_bound"),
 		decl("reply", "reply を呼ぶ応答では、地の文に何も書かない（最後の行の NO_REPLY だけは書いてよい）。地の文は別の投稿になるので、返信が二重になる。投稿に返信する。event に会話の e番号か at:// の uri（read_* の結果に出る）、text に返信本文。"+endTurn, reply, true, "conversation_bound"),
 		decl("repost", "投稿をリポストする。event に会話の e番号か at:// の uri（read_* の結果に出る）。"+endTurn,
@@ -86,6 +90,7 @@ func Operations(withFiles bool) []any {
 // Poster is the part of the Bluesky client the operations use (a stub in tests).
 type Poster interface {
 	Post(ctx context.Context, text, replyTo string, images []bsky.Image) ([]string, error)
+	SendDM(ctx context.Context, convoID, text string) ([]string, error)
 	Like(ctx context.Context, uri string) (string, error)
 	Repost(ctx context.Context, uri string) (string, error)
 	Follow(ctx context.Context, who string) (string, error)
@@ -96,6 +101,17 @@ type Poster interface {
 type Ops struct {
 	Bsky       Poster
 	OutboxRoot string
+	// AgentID reads a session key back to its DM conversation (inbound.DMConvo).
+	AgentID string
+}
+
+// sendText is where plain text of a session goes: its DM conversation for a DM session, else a
+// post (a reply when replyTarget is set). The one routing rule for say and send_dm.
+func (o *Ops) sendText(ctx context.Context, session, text, replyTarget string, images []bsky.Image) ([]string, error) {
+	if convo := inbound.DMConvo(session, o.AgentID); convo != "" {
+		return o.Bsky.SendDM(ctx, convo, text)
+	}
+	return o.Bsky.Post(ctx, text, replyTarget, images)
 }
 
 var errNoAccount = errors.New("the bot has no Bluesky account yet")
@@ -104,11 +120,11 @@ var errNoAccount = errors.New("the bot has no Bluesky account yet")
 // read operations show uris the model can pass as they are. One check for every op taking event.
 func isPostURI(event string) bool { return strings.HasPrefix(event, "at://") }
 
-func (o *Ops) Say(ctx context.Context, _ string, text, replyTarget string) error {
+func (o *Ops) Say(ctx context.Context, session, text, replyTarget string) error {
 	if o.Bsky == nil {
 		return errNoAccount
 	}
-	_, err := o.Bsky.Post(ctx, text, replyTarget, nil)
+	_, err := o.sendText(ctx, session, text, replyTarget, nil)
 	return err
 }
 
@@ -120,7 +136,7 @@ func outcomeOf(err error) gate.Outcome {
 	return gate.OutcomeIndeterminate
 }
 
-func (o *Ops) Invoke(ctx context.Context, _ string, operation string, raw json.RawMessage) (any, gate.Outcome) {
+func (o *Ops) Invoke(ctx context.Context, session string, operation string, raw json.RawMessage) (any, gate.Outcome) {
 	var p struct {
 		Text  string            `json:"text"`
 		Event string            `json:"event"`
@@ -134,6 +150,19 @@ func (o *Ops) Invoke(ctx context.Context, _ string, operation string, raw json.R
 		return result, outcome
 	}
 	switch operation {
+	case "send_dm":
+		convo := inbound.DMConvo(session, o.AgentID)
+		if convo == "" || strings.TrimSpace(p.Text) == "" {
+			return nil, gate.OutcomeRejected
+		}
+		ids, err := o.sendText(ctx, session, p.Text, "", nil)
+		if err != nil {
+			if len(ids) > 0 {
+				return nil, gate.OutcomeIndeterminate
+			}
+			return nil, outcomeOf(err)
+		}
+		return nil, gate.OutcomeOk
 	case "post", "reply":
 		if operation == "reply" && !isPostURI(p.Event) {
 			return nil, gate.OutcomeRejected

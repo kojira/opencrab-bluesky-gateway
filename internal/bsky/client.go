@@ -20,6 +20,9 @@ import (
 
 const DefaultService = "https://bsky.social"
 
+// ChatProxy is the service a PDS forwards chat.bsky.* calls to (atproto-proxy header).
+const ChatProxy = "did:web:api.bsky.chat#bsky_chat"
+
 // APIError is an XRPC error answer.
 type APIError struct {
 	Status  int
@@ -172,6 +175,11 @@ func (c *Client) do(ctx context.Context, method, nsid string, query url.Values, 
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
+	}
+	// chat.bsky.* is served by the chat service; the PDS forwards it when asked (atproto service
+	// proxying). One rule for every call, keyed on the method's namespace.
+	if strings.HasPrefix(nsid, "chat.bsky.") {
+		req.Header.Set("atproto-proxy", ChatProxy)
 	}
 	var resp *http.Response
 	if c.OAuth != nil {
