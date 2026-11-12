@@ -14,6 +14,54 @@ import (
 // SessionKey is the core session of a bot: one conversation per agent, like Nostr.
 func SessionKey(agentID string) string { return "bluesky-" + agentID }
 
+// dmPrefix starts a DM session key: one core session per Bluesky conversation (D-1123).
+const dmPrefix = "bluesky-dm-"
+
+// DMSessionKey is the core session of one DM conversation of the bot's agent.
+func DMSessionKey(agentID, convoID string) string { return dmPrefix + agentID + "-" + convoID }
+
+// DMConvo is the conversation a session key belongs to ("" for the public timeline session).
+// The one place that reads a session key back (sending routes on it).
+func DMConvo(session, agentID string) string {
+	prefix := dmPrefix + agentID + "-"
+	if !strings.HasPrefix(session, prefix) {
+		return ""
+	}
+	return strings.TrimPrefix(session, prefix)
+}
+
+// DMContext is told with every delivered DM: where a plain-text answer goes. A fact; the model
+// decides what to do.
+const DMContext = "これは Bluesky のDMです。地の文の返事はこのDMに送られます。"
+
+// MapDM turns one DM into a said for its conversation's session. Only an owner's message is
+// delivered (owner-only DMs); the bot's own messages and empty ones are not.
+func MapDM(e bsky.DMEvent, selfDID, agentID string, owners []string) (gate.Said, bool) {
+	m, ok := e.Message()
+	if !ok {
+		return gate.Said{}, false
+	}
+	sender := m.Sender.DID
+	if sender == "" || sender == selfDID || strings.TrimSpace(m.Text) == "" {
+		return gate.Said{}, false
+	}
+	author := e.Author(sender)
+	if !IsOwner(author, owners) {
+		return gate.Said{}, false
+	}
+	convoID := e.ConvoID
+	return gate.Said{
+		Session:       DMSessionKey(agentID, convoID),
+		Origin:        "bsky-dm:" + convoID + ":" + m.ID,
+		Ref:           "bsky-dm:" + convoID + ":" + m.ID,
+		AuthorID:      sender,
+		AuthorLabel:   truncate(author.Label(), 100),
+		Text:          m.Text,
+		Caller:        gate.CallerOwner,
+		SystemContext: DMContext,
+	}, true
+}
+
 // Reasons delivered to the agent.
 var reasons = map[string]bool{"mention": true, "reply": true, "quote": true}
 
@@ -119,10 +167,12 @@ func truncate(s string, n int) string {
 // MaxSeen bounds the remembered uris.
 const MaxSeen = 500
 
-// Cursor is what a bot has delivered: the newest notification time and the recent uris.
+// Cursor is what a bot has delivered: the newest notification time and the recent uris, and
+// the position in its DM event log (chat.bsky.convo.getLog).
 type Cursor struct {
 	Since string   `json:"since"`
 	Seen  []string `json:"seen"`
+	DMLog string   `json:"dm_log,omitempty"`
 }
 
 func parseTime(s string) time.Time {

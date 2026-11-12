@@ -146,7 +146,7 @@ func (d *Daemon) Apply(id string) {
 	}
 	rctx, cancel := context.WithCancel(ctx)
 	bs := d.newBsky(b)
-	ops := &Ops{OutboxRoot: d.Config.AttachmentOutboxRoot}
+	ops := &Ops{OutboxRoot: d.Config.AttachmentOutboxRoot, AgentID: b.AgentID}
 	if d.configured(b) {
 		ops.Bsky = bs
 	}
@@ -242,8 +242,73 @@ type Notifier interface {
 	SelfDID(ctx context.Context) (string, error)
 }
 
-func (d *Daemon) pollOnce(ctx context.Context, b store.Bot, bs Notifier, sink Sink) error {
-	return Deliver(ctx, d.Store, b, bs, sink)
+// DMReader reads the bot's DM event log (the Bluesky client; a stub in tests).
+type DMReader interface {
+	DMLog(ctx context.Context, cursor string) (*bsky.DMLog, error)
+}
+
+func (d *Daemon) pollOnce(ctx context.Context, b store.Bot, bs *bsky.Client, sink Sink) error {
+	if err := Deliver(ctx, d.Store, b, bs, sink); err != nil {
+		return err
+	}
+	if !bs.CanDM() {
+		return nil
+	}
+	return DeliverDMs(ctx, d.Store, b, bs, bs, sink, d.Log.With("bot", b.Label))
+}
+
+// DeliverDMs is one DM poll: new messages of the event log go to core in order, owners' only;
+// the cursor moves page by page, so a restart neither repeats nor skips them. The first
+// run starts from now (old DMs are not answered). Core being away stops the round.
+func DeliverDMs(ctx context.Context, st *store.Store, b store.Bot, self Notifier, dms DMReader, sink Sink, log *slog.Logger) error {
+	if !sink.Ready() {
+		return nil
+	}
+	selfDID, err := self.SelfDID(ctx)
+	if err != nil {
+		return err
+	}
+	cur := st.Cursor(b.InstanceID)
+	if cur.DMLog == "" {
+		page, err := dms.DMLog(ctx, "")
+		if err != nil {
+			return err
+		}
+		cur.DMLog = page.Cursor
+		if cur.DMLog == "" {
+			return nil
+		}
+		return st.SetCursor(b.InstanceID, cur)
+	}
+	for {
+		page, err := dms.DMLog(ctx, cur.DMLog)
+		if err != nil {
+			return err
+		}
+		for _, e := range page.Logs {
+			if said, ok := inbound.MapDM(e, selfDID, b.AgentID, b.Owners); ok {
+				if _, err := sink.Said(ctx, said); err != nil {
+					var se *gate.SaidError
+					if !errors.As(err, &se) {
+						return err // not delivered: try again next round
+					}
+				}
+			} else if m, isMsg := e.Message(); isMsg && m.Sender.DID != selfDID {
+				log.Debug("dm not delivered (not an owner or empty)", "convo", e.ConvoID)
+			}
+		}
+		// The cursor moves once the page is handled. A page cut short by a crash is read again;
+		// core drops a said whose origin it already has, so nothing is delivered twice.
+		if page.Cursor != "" && page.Cursor != cur.DMLog {
+			cur.DMLog = page.Cursor
+			if err := st.SetCursor(b.InstanceID, cur); err != nil {
+				return err
+			}
+		}
+		if len(page.Logs) == 0 {
+			return nil
+		}
+	}
 }
 
 // Deliver is one poll: new notifications go to core in order; each one handled moves the

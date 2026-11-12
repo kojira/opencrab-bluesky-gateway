@@ -141,7 +141,7 @@ func start(t *testing.T, l *Linker, srv *stubServer) string {
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
 	if srv.par.Get("client_assertion_type") == "" || srv.par.Get("code_challenge_method") != "S256" || srv.par.Get("login_hint") != "bot.example.com" ||
-		srv.par.Get("scope") != "atproto transition:generic" || srv.par.Get("redirect_uri") != "https://gw.example.ts.net:8795/oauth/callback" {
+		srv.par.Get("scope") != "atproto transition:generic transition:chat.bsky" || srv.par.Get("redirect_uri") != "https://gw.example.ts.net:8795/oauth/callback" {
 		t.Fatalf("PAR %v", srv.par)
 	}
 	return srv.par.Get("state")
@@ -238,7 +238,7 @@ func TestClientMetadataPublishesOnlyThePublicKey(t *testing.T) {
 	if err := m.Validate(l.App.Config.ClientID); err != nil {
 		t.Fatal(err)
 	}
-	if !m.IsConfidential() || m.TokenEndpointAuthMethod != "private_key_jwt" || m.Scope != "atproto transition:generic" {
+	if !m.IsConfidential() || m.TokenEndpointAuthMethod != "private_key_jwt" || m.Scope != "atproto transition:generic transition:chat.bsky" {
 		t.Fatalf("metadata %+v", m)
 	}
 	data, _ := json.Marshal(m)

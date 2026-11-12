@@ -16,6 +16,7 @@ import (
 
 	"github.com/kojira/opencrab-bluesky-gateway/internal/bsky"
 	"github.com/kojira/opencrab-bluesky-gateway/internal/gate"
+	"github.com/kojira/opencrab-bluesky-gateway/internal/inbound"
 	"github.com/kojira/opencrab-bluesky-gateway/internal/store"
 )
 
@@ -182,6 +183,10 @@ func (f *fakePoster) Repost(_ context.Context, uri string) (string, error) {
 	f.calls = append(f.calls, "repost|"+uri)
 	return "", f.err
 }
+func (f *fakePoster) SendDM(_ context.Context, convo, text string) ([]string, error) {
+	f.calls = append(f.calls, "dm|"+convo+"|"+text)
+	return []string{"m"}, f.err
+}
 func (f *fakePoster) Follow(_ context.Context, who string) (string, error) {
 	f.calls = append(f.calls, "follow|"+who)
 	return "", f.err
@@ -266,5 +271,77 @@ func TestEveryOperationIsOfferedToSubtasks(t *testing.T) {
 		if o["sub_engine"] != "allowed" {
 			t.Fatalf("%v: sub_engine = %v, want allowed", o["name"], o["sub_engine"])
 		}
+	}
+}
+
+// D-1123: owner-only DMs.
+type fakeDMs struct{ pages map[string]*bsky.DMLog }
+
+func (f *fakeDMs) DMLog(_ context.Context, cursor string) (*bsky.DMLog, error) {
+	if p, ok := f.pages[cursor]; ok {
+		return p, nil
+	}
+	return &bsky.DMLog{Cursor: cursor}, nil
+}
+
+func dm(convo, rev, id, sender, text string) bsky.DMEvent {
+	msg, _ := json.Marshal(map[string]any{"$type": "chat.bsky.convo.defs#messageView", "id": id, "rev": rev, "text": text, "sender": map[string]string{"did": sender}})
+	return bsky.DMEvent{Type: bsky.LogCreateMessage, ConvoID: convo, Rev: rev, Raw: msg,
+		RelatedProfiles: []bsky.Author{{DID: sender, Handle: sender[8:] + ".test"}}}
+}
+
+func TestDeliverDMsOwnerOnlyAndSurvivesRestart(t *testing.T) {
+	st, _ := store.Open(t.TempDir())
+	b, _ := st.Create("agent-1", "bot")
+	owners := []string{"did:plc:owner"}
+	b, _ = st.Update(b.InstanceID, store.Edit{Owners: &owners})
+	dms := &fakeDMs{pages: map[string]*bsky.DMLog{
+		"":   {Cursor: "c1"},
+		"c1": {Cursor: "c2", Logs: []bsky.DMEvent{dm("cv", "r1", "m1", "did:plc:owner", "やあ"), dm("cv", "r2", "m2", "did:plc:stranger", "spam"), dm("cv", "r3", "m3", "did:plc:bot", "own")}},
+	}}
+	sink := &fakeSink{}
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	// first run starts from now
+	if err := DeliverDMs(ctx, st, b, &fakeBsky{}, dms, sink, log); err != nil || len(sink.got) != 0 {
+		t.Fatal(sink.got, err)
+	}
+	if err := DeliverDMs(ctx, st, b, &fakeBsky{}, dms, sink, log); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.got) != 1 {
+		t.Fatalf("delivered %+v", sink.got)
+	}
+	s := sink.got[0]
+	if s.Session != "bluesky-dm-agent-1-cv" || s.Caller != gate.CallerOwner || s.Text != "やあ" || s.SystemContext != inbound.DMContext || s.Origin == "" {
+		t.Fatalf("said %+v", s)
+	}
+	// a new process on the same store delivers nothing again
+	st2, _ := store.Open(filepath.Dir(store.PathOf(st)))
+	sink2 := &fakeSink{}
+	if err := DeliverDMs(ctx, st2, b, &fakeBsky{}, dms, sink2, log); err != nil || len(sink2.got) != 0 {
+		t.Fatalf("repeated after restart: %+v %v", sink2.got, err)
+	}
+}
+
+func TestSayAndSendDMRouteOnTheSession(t *testing.T) {
+	p := &fakePoster{}
+	o := &Ops{Bsky: p, AgentID: "agent-1"}
+	ctx := context.Background()
+	if err := o.Say(ctx, "bluesky-dm-agent-1-cv", "dm text", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Say(ctx, "bluesky-agent-1", "public", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, out := o.Invoke(ctx, "bluesky-dm-agent-1-cv", "send_dm", json.RawMessage(`{"text":"from op"}`)); out != gate.OutcomeOk {
+		t.Fatal(out)
+	}
+	if _, out := o.Invoke(ctx, "bluesky-agent-1", "send_dm", json.RawMessage(`{"text":"x"}`)); out != gate.OutcomeRejected {
+		t.Fatal("send_dm outside a DM session must be rejected")
+	}
+	want := []string{"dm|cv|dm text", "post|public||0", "dm|cv|from op"}
+	if strings.Join(p.calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("calls %v", p.calls)
 	}
 }
