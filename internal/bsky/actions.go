@@ -68,11 +68,19 @@ func (c *Client) Post(ctx context.Context, text, replyTo string, images []Image)
 	if len(images) > 0 {
 		var items []map[string]any
 		for _, img := range images {
+			img, w, h, err := PrepareImage(img)
+			if err != nil {
+				return nil, err
+			}
 			blob, err := c.UploadBlob(ctx, img.Data, img.MimeType)
 			if err != nil {
 				return nil, err
 			}
-			items = append(items, map[string]any{"alt": img.Alt, "image": blob})
+			items = append(items, map[string]any{
+				"alt":         img.Alt,
+				"image":       blob,
+				"aspectRatio": map[string]int{"width": w, "height": h},
+			})
 		}
 		embed, _ = json.Marshal(map[string]any{"$type": "app.bsky.embed.images", "images": items})
 	}

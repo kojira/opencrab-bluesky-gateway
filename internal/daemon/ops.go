@@ -51,7 +51,7 @@ func Operations(withFiles bool) []any {
 	files := gate.Obj{
 		"type":        "array",
 		"items":       gate.Obj{"type": "string", "format": "workspace-file"},
-		"description": "Workspace image files (JPEG, PNG, WebP, GIF), up to 4, each under 1 MB.",
+		"description": "Workspace image files (JPEG, PNG, WebP, GIF), up to 4. Images over Bluesky's 2 MB limit are scaled down and re-encoded as JPEG automatically.",
 	}
 	post := gate.Obj{"type": "object", "required": []any{"text"}, "properties": gate.Obj{"text": str("投稿本文（300文字を超えるとスレッドに分けて投稿する）")}}
 	reply := gate.Obj{"type": "object", "required": []any{"event", "text"}, "properties": gate.Obj{
@@ -221,8 +221,6 @@ type fileDescriptor struct {
 
 var imageTypes = map[string]bool{"image/jpeg": true, "image/png": true, "image/webp": true, "image/gif": true}
 
-const maxImageBytes = 1_000_000
-
 func (o *Ops) images(raw []json.RawMessage) ([]bsky.Image, error) {
 	if len(raw) == 0 {
 		return nil, nil
@@ -233,7 +231,7 @@ func (o *Ops) images(raw []json.RawMessage) ([]bsky.Image, error) {
 	var out []bsky.Image
 	for _, r := range raw {
 		var d fileDescriptor
-		if json.Unmarshal(r, &d) != nil || d.LocalPath == "" || !imageTypes[d.MediaType] || d.Size > maxImageBytes {
+		if json.Unmarshal(r, &d) != nil || d.LocalPath == "" || !imageTypes[d.MediaType] {
 			return nil, errors.New("not an image descriptor")
 		}
 		data, err := readVerified(o.OutboxRoot, d)
