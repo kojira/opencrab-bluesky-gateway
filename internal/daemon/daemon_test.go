@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -344,4 +345,43 @@ func TestSayAndSendDMRouteOnTheSession(t *testing.T) {
 	if strings.Join(p.calls, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls %v", p.calls)
 	}
+}
+
+// D-1127: an mp4 in the outbox goes through the same files field as images; mixing is refused
+// before anything is posted.
+func TestFilesCarryOneVideoButNotVideoWithImages(t *testing.T) {
+	root := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(root, "a"), 0o700)
+	put := func(name, mime string, data []byte) string {
+		_ = os.WriteFile(filepath.Join(root, "a", name), data, 0o600)
+		sum := sha256.Sum256(data)
+		return `{"id":"` + name + `","name":"` + name + `","media_type":"` + mime + `","size":` + itoa(len(data)) + `,"sha256":"` + hex.EncodeToString(sum[:]) + `","local_path":"a/` + name + `"}`
+	}
+	video := put("v.mp4", "video/mp4", minimalMP4())
+	img := put("x.jpg", "image/jpeg", []byte("\xff\xd8jpeg"))
+	p := &fakePoster{}
+	o := &Ops{Bsky: p, OutboxRoot: root}
+	if _, out := o.Invoke(context.Background(), "s", "post", json.RawMessage(`{"text":"t","files":[`+video+`]}`)); out != gate.OutcomeOk || p.calls[0] != "post|t||1" {
+		t.Fatalf("%v %v", out, p.calls)
+	}
+	if _, out := o.Invoke(context.Background(), "s", "post", json.RawMessage(`{"text":"t","files":[`+video+`,`+img+`]}`)); out != gate.OutcomeRejected || len(p.calls) != 1 {
+		t.Fatalf("video with an image was not refused: %v %v", out, p.calls)
+	}
+}
+
+// minimalMP4 is moov(mvhd 6 s, trak(tkhd 640x480)): enough for the mp4 checks.
+func minimalMP4() []byte {
+	box := func(typ string, body []byte) []byte {
+		b := make([]byte, 8, 8+len(body))
+		binary.BigEndian.PutUint32(b, uint32(8+len(body)))
+		copy(b[4:], typ)
+		return append(b, body...)
+	}
+	mvhd := make([]byte, 100)
+	binary.BigEndian.PutUint32(mvhd[12:], 1000)
+	binary.BigEndian.PutUint32(mvhd[16:], 6000)
+	tkhd := make([]byte, 84)
+	binary.BigEndian.PutUint32(tkhd[76:], 640<<16)
+	binary.BigEndian.PutUint32(tkhd[80:], 480<<16)
+	return box("moov", append(box("mvhd", mvhd), box("trak", box("tkhd", tkhd))...))
 }

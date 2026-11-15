@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -51,7 +52,7 @@ func Operations(withFiles bool) []any {
 	files := gate.Obj{
 		"type":        "array",
 		"items":       gate.Obj{"type": "string", "format": "workspace-file"},
-		"description": "Workspace image files (JPEG, PNG, WebP, GIF), up to 4. Images over Bluesky's 2 MB limit are scaled down and re-encoded as JPEG automatically.",
+		"description": "Workspace files: up to 4 images (JPEG, PNG, WebP, GIF), or exactly 1 video (mp4, at most 300 MB and 10 minutes) — never images and a video together. 画像は4枚まで、または動画1本（mp4、300MB・10分まで）。Images over Bluesky's 2 MB limit are scaled down and re-encoded as JPEG automatically.",
 	}
 	post := gate.Obj{"type": "object", "required": []any{"text"}, "properties": gate.Obj{"text": str("投稿本文（300文字を超えるとスレッドに分けて投稿する）")}}
 	reply := gate.Obj{"type": "object", "required": []any{"event", "text"}, "properties": gate.Obj{
@@ -168,7 +169,11 @@ func (o *Ops) Invoke(ctx context.Context, session string, operation string, raw 
 			return nil, gate.OutcomeRejected
 		}
 		images, err := o.images(p.Files)
-		if err != nil || (strings.TrimSpace(p.Text) == "" && len(images) == 0) {
+		if err != nil {
+			slog.Warn("files rejected", "operation", operation, "err", err)
+			return nil, gate.OutcomeRejected
+		}
+		if strings.TrimSpace(p.Text) == "" && len(images) == 0 {
 			return nil, gate.OutcomeRejected
 		}
 		target := ""
@@ -176,6 +181,11 @@ func (o *Ops) Invoke(ctx context.Context, session string, operation string, raw 
 			target = p.Event
 		}
 		uris, err := o.Bsky.Post(ctx, p.Text, target, images)
+		var mediaErr *bsky.MediaError
+		if errors.As(err, &mediaErr) {
+			slog.Warn("media rejected", "operation", operation, "err", err)
+			return nil, gate.OutcomeRejected
+		}
 		if err != nil {
 			if len(uris) > 0 {
 				return nil, gate.OutcomeIndeterminate
@@ -219,19 +229,20 @@ type fileDescriptor struct {
 	LocalPath string `json:"local_path"`
 }
 
-var imageTypes = map[string]bool{"image/jpeg": true, "image/png": true, "image/webp": true, "image/gif": true}
+// mediaTypes are the files a post can carry; how many of which is bsky.CheckMedia's rule.
+var mediaTypes = map[string]bool{"image/jpeg": true, "image/png": true, "image/webp": true, "image/gif": true, bsky.VideoMIME: true}
 
 func (o *Ops) images(raw []json.RawMessage) ([]bsky.Image, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
-	if o.OutboxRoot == "" || len(raw) > bsky.MaxImages {
+	if o.OutboxRoot == "" {
 		return nil, errors.New("files are not available")
 	}
 	var out []bsky.Image
 	for _, r := range raw {
 		var d fileDescriptor
-		if json.Unmarshal(r, &d) != nil || d.LocalPath == "" || !imageTypes[d.MediaType] {
+		if json.Unmarshal(r, &d) != nil || d.LocalPath == "" || !mediaTypes[d.MediaType] {
 			return nil, errors.New("not an image descriptor")
 		}
 		data, err := readVerified(o.OutboxRoot, d)
@@ -239,6 +250,9 @@ func (o *Ops) images(raw []json.RawMessage) ([]bsky.Image, error) {
 			return nil, err
 		}
 		out = append(out, bsky.Image{Data: data, MimeType: d.MediaType, Alt: d.Name})
+	}
+	if err := bsky.CheckMedia(out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

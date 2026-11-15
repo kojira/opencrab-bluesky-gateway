@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// Image is one image to attach to a post.
+// Image is one file to attach to a post: an image, or an mp4 video (MimeType tells which).
 type Image struct {
 	Data     []byte
 	MimeType string
@@ -40,18 +40,19 @@ func (c *Client) ReplyRefFor(ctx context.Context, uri string) (*ReplyRef, error)
 	return &ReplyRef{Root: root, Parent: parent}, nil
 }
 
-// Post publishes text (split into a thread when longer than one post) with images on the first
-// part. replyTo is an at:// post uri to answer, or "". It returns the uris of the posts made.
-func (c *Client) Post(ctx context.Context, text, replyTo string, images []Image) ([]string, error) {
+// Post publishes text (split into a thread when longer than one post) with media on the first
+// part: up to MaxImages images, or exactly one mp4 video. replyTo is an at:// post uri to answer,
+// or "". It returns the uris of the posts made.
+func (c *Client) Post(ctx context.Context, text, replyTo string, media []Image) ([]string, error) {
 	parts := SplitThread(text, MaxGraphemes)
 	if len(parts) == 0 {
-		if len(images) == 0 {
+		if len(media) == 0 {
 			return nil, errors.New("bsky: nothing to post")
 		}
 		parts = []string{""}
 	}
-	if len(images) > MaxImages {
-		return nil, fmt.Errorf("bsky: at most %d images", MaxImages)
+	if err := CheckMedia(media); err != nil {
+		return nil, err
 	}
 	var reply *ReplyRef
 	if replyTo != "" {
@@ -61,25 +62,9 @@ func (c *Client) Post(ctx context.Context, text, replyTo string, images []Image)
 		}
 		reply = r
 	}
-	var embed json.RawMessage
-	if len(images) > 0 {
-		var items []map[string]any
-		for _, img := range images {
-			img, w, h, err := PrepareImage(img)
-			if err != nil {
-				return nil, err
-			}
-			blob, err := c.UploadBlob(ctx, img.Data, img.MimeType)
-			if err != nil {
-				return nil, err
-			}
-			items = append(items, map[string]any{
-				"alt":         img.Alt,
-				"image":       blob,
-				"aspectRatio": map[string]int{"width": w, "height": h},
-			})
-		}
-		embed, _ = json.Marshal(map[string]any{"$type": "app.bsky.embed.images", "images": items})
+	embed, err := c.mediaEmbed(ctx, media)
+	if err != nil {
+		return nil, err
 	}
 	var uris []string
 	for i, part := range parts {
@@ -147,4 +132,66 @@ func (c *Client) Follow(ctx context.Context, who string) (string, error) {
 	}
 	ref, err := c.CreateRecord(ctx, "app.bsky.graph.follow", map[string]any{"$type": "app.bsky.graph.follow", "subject": did, "createdAt": now()})
 	return ref.URI, err
+}
+
+// CheckMedia is the one rule for what a post can carry: up to MaxImages images, or one mp4 video
+// alone (within the video limits). It answers before anything is uploaded.
+func CheckMedia(media []Image) error {
+	videos := 0
+	for _, m := range media {
+		if IsVideo(m.MimeType) {
+			videos++
+		}
+	}
+	switch {
+	case videos > 0 && len(media) > 1:
+		return &MediaError{"1つの投稿に付けられるのは、画像（4枚まで）か動画1本のどちらかです。動画と画像、または動画2本以上は一緒に付けられません"}
+	case videos == 1:
+		_, err := CheckVideo(media[0])
+		return err
+	case len(media) > MaxImages:
+		return &MediaError{fmt.Sprintf("画像は1つの投稿に%d枚までです", MaxImages)}
+	}
+	return nil
+}
+
+// mediaEmbed uploads the media and builds the post's embed (images or video), or nil.
+func (c *Client) mediaEmbed(ctx context.Context, media []Image) (json.RawMessage, error) {
+	if len(media) == 0 {
+		return nil, nil
+	}
+	if IsVideo(media[0].MimeType) {
+		v := media[0]
+		info, err := CheckVideo(v)
+		if err != nil {
+			return nil, err
+		}
+		blob, err := c.UploadVideo(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{
+			"$type":       "app.bsky.embed.video",
+			"video":       blob,
+			"alt":         v.Alt,
+			"aspectRatio": map[string]int{"width": info.Width, "height": info.Height},
+		})
+	}
+	var items []map[string]any
+	for _, img := range media {
+		img, w, h, err := PrepareImage(img)
+		if err != nil {
+			return nil, err
+		}
+		blob, err := c.UploadBlob(ctx, img.Data, img.MimeType)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, map[string]any{
+			"alt":         img.Alt,
+			"image":       blob,
+			"aspectRatio": map[string]int{"width": w, "height": h},
+		})
+	}
+	return json.Marshal(map[string]any{"$type": "app.bsky.embed.images", "images": items})
 }

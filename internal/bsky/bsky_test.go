@@ -88,6 +88,14 @@ func (s *stub) serve(w http.ResponseWriter, r *http.Request) {
 		s.created = append(s.created, body)
 		n := len(s.created)
 		reply(map[string]string{"uri": "at://did:plc:bot/" + body["collection"].(string) + "/" + string(rune('a'+n-1)), "cid": "cid" + string(rune('a'+n-1))})
+	case "com.atproto.server.getServiceAuth":
+		q := r.URL.Query()
+		if q.Get("lxm") != "com.atproto.repo.uploadBlob" || !strings.HasPrefix(q.Get("aud"), "did:web:") || q.Get("exp") == "" {
+			w.WriteHeader(400)
+			reply(map[string]string{"error": "InvalidRequest", "message": "bad service auth request"})
+			return
+		}
+		reply(map[string]string{"token": "svc-token"})
 	case "com.atproto.repo.uploadBlob":
 		data, _ := io.ReadAll(r.Body)
 		s.uploads = append(s.uploads, upload{r.Header.Get("Content-Type"), data})

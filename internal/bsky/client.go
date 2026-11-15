@@ -47,6 +47,10 @@ type Client struct {
 	Password string
 	HTTP     *http.Client
 	OAuth    *oauth.ClientSession
+	// VideoService is the video upload service (DefaultVideoService when empty).
+	VideoService string
+	// VideoPollInterval is the wait between video job status checks (1s when zero).
+	VideoPollInterval time.Duration
 
 	mu      sync.Mutex
 	access  string
@@ -146,10 +150,12 @@ func (c *Client) call(ctx context.Context, method, nsid string, query url.Values
 }
 
 func (c *Client) do(ctx context.Context, method, nsid string, query url.Values, body any, token string, out any) error {
-	base := c.service()
-	if c.OAuth != nil {
-		base = strings.TrimRight(c.OAuth.Data.HostURL, "/")
-	}
+	return c.send(ctx, c.pdsBase(), method, nsid, query, body, token, c.OAuth, out)
+}
+
+// send is the one XRPC request path: base is the PDS or another service (the video service); an
+// OAuth session signs the request (DPoP) only when given.
+func (c *Client) send(ctx context.Context, base, method, nsid string, query url.Values, body any, token string, session *oauth.ClientSession, out any) error {
 	u := base + "/xrpc/" + nsid
 	if len(query) > 0 {
 		u += "?" + query.Encode()
@@ -182,8 +188,8 @@ func (c *Client) do(ctx context.Context, method, nsid string, query url.Values, 
 		req.Header.Set("atproto-proxy", ChatProxy)
 	}
 	var resp *http.Response
-	if c.OAuth != nil {
-		resp, err = c.OAuth.DoWithAuth(c.http(), req, syntax.NSID(nsid))
+	if session != nil {
+		resp, err = session.DoWithAuth(c.http(), req, syntax.NSID(nsid))
 	} else {
 		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)

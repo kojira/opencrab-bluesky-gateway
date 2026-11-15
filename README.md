@@ -57,7 +57,7 @@ core とは core の gate ソケット（Unix ドメインソケット）で、g
 - 一覧の本文は 150 文字（書記素）までです。全文は `read_thread` で読みます。
 - `limit` の既定は 8 件（最大 100）です。core はゲートウェイの操作の結果を約 2,500 トークンまで会話に入れ、超えるとファイルに保存して場所だけを返します。既定の件数はそこに収まる目安です。続きは `next_cursor` を `cursor` に渡して読みます。
 
-- `files` は、エージェントの作業フォルダの画像です（JPEG・PNG・WebP・GIF、4 枚まで、1 枚 1MB まで）。`attachment_outbox_root` を設定したときだけ使えます。
+- `files` は、エージェントの作業フォルダのファイルです。画像（JPEG・PNG・WebP・GIF）4 枚まで、または動画（mp4）1 本のどちらかです。画像は 2MB を超えると自動で縮めます。動画は 300MB・10 分まで（app.bsky.embed.video の上限）で、Bluesky の動画サービス（video.bsky.app）に送って処理を待ってから投稿します。`attachment_outbox_root` を設定したときだけ使えます。
 
 ## 設定ファイル
 
@@ -81,7 +81,7 @@ core とは core の gate ソケット（Unix ドメインソケット）で、g
 | `data_dir` | ○ | bot の設定と受信の位置を置くフォルダ。`bots.json` はモード 0600 で書きます。 |
 | `listen` |  | 設定画面の待ち受け。既定 `0.0.0.0:8795` |
 | `core_api` |  | core の HTTP API。設定画面のエージェント一覧に使います。無ければエージェント ID を手で入れます。 |
-| `attachment_outbox_root` |  | core の送信用ファイル置き場。画像の投稿に使います。 |
+| `attachment_outbox_root` |  | core の送信用ファイル置き場。画像と動画の投稿に使います。 |
 | `oauth` |  | 「Bluesky でログイン」を使うときの設定（下の「OAuth でログイン」）。無ければアプリパスワードだけです。 |
 
 ## 動かす
