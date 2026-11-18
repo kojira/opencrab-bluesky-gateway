@@ -47,11 +47,11 @@ func Operations(withFiles bool) []any {
 	}
 	str := func(desc string) gate.Obj { return gate.Obj{"type": "string", "description": desc} }
 	ref := func(desc string) gate.Obj {
-		return gate.Obj{"type": "string", "description": desc, "format": "short-ref"}
+		return gate.Obj{"type": "string", "description": desc, "x-opencrab-short-ref": true}
 	}
 	files := gate.Obj{
 		"type":        "array",
-		"items":       gate.Obj{"type": "string", "format": "workspace-file"},
+		"items":       gate.Obj{"type": "string", "x-opencrab-workspace-file": true},
 		"description": "Workspace files: up to 4 images (JPEG, PNG, WebP, GIF), or exactly 1 video (mp4, at most 300 MB and 10 minutes) — never images and a video together. 画像は4枚まで、または動画1本（mp4、300MB・10分まで）。Images over Bluesky's 2 MB limit are scaled down and re-encoded as JPEG automatically.",
 	}
 	post := gate.Obj{"type": "object", "required": []any{"text"}, "properties": gate.Obj{"text": str("投稿本文（300文字を超えるとスレッドに分けて投稿する）")}}
