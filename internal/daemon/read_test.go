@@ -278,8 +278,12 @@ func TestResolveShowsAPostWithItsParentQuoteAndImages(t *testing.T) {
 			if !strings.Contains(d["description"].(string), "view_image") {
 				t.Fatal("resolve does not tell the agent it can open the images with view_image")
 			}
-			if d["input_schema"].(gate.Obj)["properties"].(gate.Obj)["ref"].(gate.Obj)["format"] != "short-ref" {
+			ref := d["input_schema"].(gate.Obj)["properties"].(gate.Obj)["ref"].(gate.Obj)
+			if ref["x-opencrab-short-ref"] != true {
 				t.Fatal("resolve ref is not a short-ref field (core would not turn e-numbers into uris)")
+			}
+			if _, ok := ref["format"]; ok {
+				t.Fatal("resolve ref carries a JSON Schema format (LLM providers reject unknown formats)")
 			}
 			return
 		}

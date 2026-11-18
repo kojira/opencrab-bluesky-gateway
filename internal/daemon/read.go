@@ -39,7 +39,7 @@ const readSize = "結果は同じターンで返る。投稿ごとに 作者・�
 func readOperations(decl func(name, desc string, input gate.Obj, dispatch, effect, sharing string) gate.Obj) []gate.Obj {
 	str := func(desc string) gate.Obj { return gate.Obj{"type": "string", "description": desc} }
 	ref := func(desc string) gate.Obj {
-		return gate.Obj{"type": "string", "description": desc, "format": "short-ref"}
+		return gate.Obj{"type": "string", "description": desc, "x-opencrab-short-ref": true}
 	}
 	num := func(desc string) gate.Obj { return gate.Obj{"type": "integer", "description": desc} }
 	limit := num(fmt.Sprintf("件数（既定 %d、最大 %d）", DefaultReadLimit, MaxReadLimit))
