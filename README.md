@@ -32,8 +32,11 @@ core とは core の gate ソケット（Unix ドメインソケット）で、g
 | `like` | `event`（e番号か at:// の uri） | いいね |
 | `repost` | `event`（e番号か at:// の uri） | リポスト |
 | `follow` | `user`（u番号、ハンドル、DID） | フォロー |
+| `send_dm` | `text` | DM の会話の中でだけ使えます（下の「DM」）。 |
 
 - 本文の URL と、`@ハンドル`（DID が引けるもの）は、リンクとして表示されます。
+- `event`・`user`・`ref` のように会話の番号（e番号・u番号）を受ける欄には、操作の宣言（`input_schema`）で `"x-opencrab-short-ref": true` を付けています。core はこの欄だけ、番号を実際の at:// URI や DID に置き換えてから渡します。`files` の要素には `"x-opencrab-workspace-file": true` を付け、core が作業フォルダのファイルを送信用の置き場に写してから渡します。どちらも core 用の目印で、JSON Schema の `format` は使いません（使うと、モデルによっては道具の説明ごと断られます）。
+
 ### DM（オーナーだけ）
 
 - オーナー（設定の「オーナー」、ハンドルか did）から届いた DM だけを、会話ごとの session `bluesky-dm-<agent_id>-<convoId>` へ渡す（caller はオーナー）。オーナー以外の DM と自分の DM は渡さない。
@@ -51,9 +54,10 @@ core とは core の gate ソケット（Unix ドメインソケット）で、g
 | `read_timeline` | `limit`、`cursor`（どちらも任意） | 自分のホームタイムライン |
 | `read_author_feed` | `user`（u番号、ハンドル、DID）、`limit`、`cursor` | ある人の投稿 |
 | `search_posts` | `query`、`limit`、`cursor` | 投稿の検索 |
-| `read_thread` | `event`（e番号か at:// の uri）、`depth` | スレッド（親と返信。本文は省略しない） |
+| `read_thread` | `event`（e番号か at:// の uri）、`depth`（既定 6、最大 10） | スレッド（親と返信。本文は省略しない） |
+| `resolve` | `ref`（e番号、at:// の uri、bsky.app の投稿 URL） | 1 つの投稿の詳細（本文は全文、返信先とスレッドの最初の uri、引用先の uri、画像の URL） |
 
-- 投稿ごとに、作者、時刻（UTC）、返信・リポスト・いいねの数、本文、at:// の uri を返します。uri は `reply`・`like`・`repost` の `event` にそのまま渡せます。
+- 投稿ごとに、作者、時刻（UTC）、返信・リポスト・いいねの数、本文、画像の https URL、at:// の uri を返します。結果の `images` に画像の URL を並べます（core の `view_image` に渡すと画像を見られます）。uri は `reply`・`like`・`repost` の `event` にそのまま渡せます。
 - 一覧の本文は 150 文字（書記素）までです。全文は `read_thread` で読みます。
 - `limit` の既定は 8 件（最大 100）です。core はゲートウェイの操作の結果を約 2,500 トークンまで会話に入れ、超えるとファイルに保存して場所だけを返します。既定の件数はそこに収まる目安です。続きは `next_cursor` を `cursor` に渡して読みます。
 
@@ -69,15 +73,15 @@ core とは core の gate ソケット（Unix ドメインソケット）で、g
   "core_api": "http://127.0.0.1:8080",
   "attachment_outbox_root": "/path/to/opencrab/data/attachments/outbox",
   "oauth": {
-    "client_id": "https://kojira.github.io/opencrab-bluesky-gateway/oauth/prod/client-metadata.json",
-    "callback_url": "https://<ホスト>.<tailnet>.ts.net:8796/oauth/callback"
+    "client_id": "https://<your-pages>/client-metadata.json",
+    "callback_url": "https://<your-host>:8796/oauth/callback"
   }
 }
 ```
 
 | キー | 必須 | 内容 |
 |---|---|---|
-| `core_socket` | ○ | core の gate ソケット（core 設定の `gate.listen_socket`） |
+| `core_socket` | ○ | core の gate ソケット（core 設定の `[gate] listen_socket`） |
 | `data_dir` | ○ | bot の設定と受信の位置を置くフォルダ。`bots.json` はモード 0600 で書きます。 |
 | `listen` |  | 設定画面の待ち受け。既定 `0.0.0.0:8795` |
 | `core_api` |  | core の HTTP API。設定画面のエージェント一覧に使います。無ければエージェント ID を手で入れます。 |
@@ -91,14 +95,15 @@ go build -o opencrab-bluesky-gateway ./cmd/opencrab-bluesky-gateway
 ./opencrab-bluesky-gateway config.json
 ```
 
-### launchd で常駐させる
+### 常駐させる
 
-`deploy/com.kojira.opencrab-bluesky-gateway.plist` の `YOU` とパスを書き換えてから、次を実行します。
+本番での常駐と入れ替えは、このリポジトリの外の配備の仕組みが行います。このリポジトリが決めているのは、次の受け渡しの形だけです。
 
-```sh
-cp deploy/com.kojira.opencrab-bluesky-gateway.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.kojira.opencrab-bluesky-gateway.plist
-```
+- パッケージは、ディレクトリ 1 つの中に `commit`（40 桁のコミット）と `bin/opencrab-bluesky-gateway` を入れた tar.gz です。
+- 起動は `opencrab-bluesky-gateway <設定ファイル>` です。設定ファイルの項目は上の「設定ファイル」のとおりです。
+- 起動できたかは、設定画面（`listen` のポート）が応答することと、動かす設定の bot の数だけ core への `hello ok` がログに出ることで確かめられます。
+
+`deploy/com.kojira.opencrab-bluesky-gateway.plist`（launchd の LaunchAgent）は、以前の常駐方法の例です。今の本番では使っていません。
 
 ## 設定画面
 
@@ -132,26 +137,23 @@ launchctl load ~/Library/LaunchAgents/com.kojira.opencrab-bluesky-gateway.plist
 
 ### 準備（gateway ごとに 1 回）
 
-OAuth では、Bluesky の認可サーバーがクライアントメタデータ（JSON）をインターネットから読みに来ます。戻り先（`callback_url`）はブラウザが開ければよいので、tailnet の中だけで構いません。
+OAuth のクライアント（`client_id`・戻り先・署名鍵）は、gateway を動かす人がそれぞれ自分で用意します。このリポジトリには、だれかのクライアントは入っていません。
 
-1. 戻り先を https にする（Tailscale）。設定画面が `8795` なら、たとえば `8796` で https にします。
+Bluesky の認可サーバーは、`client_id` の URL からクライアントメタデータ（JSON）をインターネット越しに読みに来ます。戻り先（`callback_url`）はブラウザが開ければよいので、手元のネットワークの中だけで構いません。
+
+1. 戻り先を https にします。設定画面が `8795` なら、たとえば Tailscale で `8796` を https にします。
 
    ```sh
    tailscale serve --bg --https=8796 http://127.0.0.1:8795
    ```
 
-   `callback_url` は `https://<ホスト>.<tailnet>.ts.net:8796/oauth/callback` です。設定画面もこの https の URL で開けます。
-2. 設定ファイルに `oauth`（`client_id` と `callback_url`）を書いて起動します。
-3. `https://<ホスト>.<tailnet>.ts.net:8796/oauth/client-metadata.json` に出る JSON を、このリポジトリの `docs/oauth/<名前>/client-metadata.json` に置いて main に入れます。GitHub Pages（`docs/` を公開）で `https://kojira.github.io/opencrab-bluesky-gateway/oauth/<名前>/client-metadata.json` として公開され、これが `client_id` です。
-   - 中身は公開鍵と戻り先だけです。秘密は入っていません。
+   `callback_url` は `https://<your-host>:8796/oauth/callback` です（`<your-host>` はそのマシンの名前）。設定画面もこの https の URL で開けます。
+2. メタデータを公開する https の URL を決めます（例 `https://<your-pages>/client-metadata.json`。GitHub Pages など、インターネットから読めるところ）。この URL が `client_id` です。
+3. 設定ファイルの `oauth` に `client_id` と `callback_url` を書いて起動します。署名鍵は初回起動時に `data_dir/oauth-client-key` に作られます。
+4. `https://<your-host>:8796/oauth/client-metadata.json` に出る JSON を取り、2 で決めた URL にそのまま置きます。
+   - 中身は `client_id`・戻り先・公開鍵などです。秘密は入っていません。
    - `client_id` は、その JSON を取る URL と完全に同じでなければなりません。
-
-公開しているメタデータ：
-
-| 名前 | client_id |
-|---|---|
-| `qc` | https://kojira.github.io/opencrab-bluesky-gateway/oauth/qc/client-metadata.json |
-| `prod` | https://kojira.github.io/opencrab-bluesky-gateway/oauth/prod/client-metadata.json |
+   - 署名鍵・`client_id`・`callback_url` のどれかを変えたら、もう一度取り直して置き直します。
 
 ## 開発
 

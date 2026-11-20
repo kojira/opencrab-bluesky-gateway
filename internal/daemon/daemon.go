@@ -26,7 +26,7 @@ type Config struct {
 	Listen     string `json:"listen"`
 	// CoreAPI is core's HTTP API (for the agent list on the settings page); optional.
 	CoreAPI string `json:"core_api"`
-	// AttachmentOutboxRoot is core's outbox; enables images in post/reply when set.
+	// AttachmentOutboxRoot is core's outbox; enables files (images or a video) in post/reply when set.
 	AttachmentOutboxRoot string `json:"attachment_outbox_root"`
 	// OAuth enables 「Bluesky でログイン」 (optional; without it bots use app passwords).
 	OAuth *oauthlink.Config `json:"oauth"`
