@@ -95,19 +95,15 @@ go build -o opencrab-bluesky-gateway ./cmd/opencrab-bluesky-gateway
 ./opencrab-bluesky-gateway config.json
 ```
 
-### 本番（配備スクリプト）
+### 常駐させる
 
-本番では、OpenCrab の配備スクリプト（非公開リポジトリ `kojira/opencrab-deploy` の `opencrab-prod-runtime-deploy.py`）が、core やほかの gateway とは別に、このゲートウェイだけを止めて入れ替えます。
-
-```sh
-opencrab-prod-runtime-deploy.py bluesky [--preflight-only] <bluesky-package.tgz>
-```
+本番での常駐と入れ替えは、このリポジトリの外の配備の仕組みが行います。このリポジトリが決めているのは、次の受け渡しの形だけです。
 
 - パッケージは、ディレクトリ 1 つの中に `commit`（40 桁のコミット）と `bin/opencrab-bluesky-gateway` を入れた tar.gz です。
-- 設定ファイルは配備スクリプトが書きます（`data/gateway/bluesky-gateway.json`）。`data_dir` は `data/gate/bluesky`、`listen` は `0.0.0.0:8795`、`oauth` は下の `prod` のメタデータです。
-- 入れ替えの前に `data/gate/bluesky` と設定ファイルだけをバックアップし、起動後に設定画面（8795）が応答することと、`bots.json` で「動かす」になっている bot の数だけ core への `hello ok` がログに出ることを確かめます。失敗したら、このゲートウェイだけを元に戻します。
+- 起動は `opencrab-bluesky-gateway <設定ファイル>` です。設定ファイルの項目は上の「設定ファイル」のとおりです。
+- 起動できたかは、設定画面（`listen` のポート）が応答することと、動かす設定の bot の数だけ core への `hello ok` がログに出ることで確かめられます。
 
-`deploy/com.kojira.opencrab-bluesky-gateway.plist`（launchd の LaunchAgent）は、配備スクリプトに移る前（2026-11-12 まで）の常駐方法です。本番では使っていません。
+`deploy/com.kojira.opencrab-bluesky-gateway.plist`（launchd の LaunchAgent）は、以前の常駐方法の例です。今の本番では使っていません。
 
 ## 設定画面
 
