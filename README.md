@@ -73,8 +73,8 @@ core とは core の gate ソケット（Unix ドメインソケット）で、g
   "core_api": "http://127.0.0.1:8080",
   "attachment_outbox_root": "/path/to/opencrab/data/attachments/outbox",
   "oauth": {
-    "client_id": "https://kojira.github.io/opencrab-bluesky-gateway/oauth/prod/client-metadata.json",
-    "callback_url": "https://<ホスト>.<tailnet>.ts.net:8796/oauth/callback"
+    "client_id": "https://<your-pages>/client-metadata.json",
+    "callback_url": "https://<your-host>:8796/oauth/callback"
   }
 }
 ```
@@ -137,26 +137,23 @@ go build -o opencrab-bluesky-gateway ./cmd/opencrab-bluesky-gateway
 
 ### 準備（gateway ごとに 1 回）
 
-OAuth では、Bluesky の認可サーバーがクライアントメタデータ（JSON）をインターネットから読みに来ます。戻り先（`callback_url`）はブラウザが開ければよいので、tailnet の中だけで構いません。
+OAuth のクライアント（`client_id`・戻り先・署名鍵）は、gateway を動かす人がそれぞれ自分で用意します。このリポジトリには、だれかのクライアントは入っていません。
 
-1. 戻り先を https にする（Tailscale）。設定画面が `8795` なら、たとえば `8796` で https にします。
+Bluesky の認可サーバーは、`client_id` の URL からクライアントメタデータ（JSON）をインターネット越しに読みに来ます。戻り先（`callback_url`）はブラウザが開ければよいので、手元のネットワークの中だけで構いません。
+
+1. 戻り先を https にします。設定画面が `8795` なら、たとえば Tailscale で `8796` を https にします。
 
    ```sh
    tailscale serve --bg --https=8796 http://127.0.0.1:8795
    ```
 
-   `callback_url` は `https://<ホスト>.<tailnet>.ts.net:8796/oauth/callback` です。設定画面もこの https の URL で開けます。
-2. 設定ファイルに `oauth`（`client_id` と `callback_url`）を書いて起動します。
-3. `https://<ホスト>.<tailnet>.ts.net:8796/oauth/client-metadata.json` に出る JSON を、このリポジトリの `docs/oauth/<名前>/client-metadata.json` に置いて main に入れます。GitHub Pages（`docs/` を公開）で `https://kojira.github.io/opencrab-bluesky-gateway/oauth/<名前>/client-metadata.json` として公開され、これが `client_id` です。
-   - 中身は公開鍵と戻り先だけです。秘密は入っていません。
+   `callback_url` は `https://<your-host>:8796/oauth/callback` です（`<your-host>` はそのマシンの名前）。設定画面もこの https の URL で開けます。
+2. メタデータを公開する https の URL を決めます（例 `https://<your-pages>/client-metadata.json`。GitHub Pages など、インターネットから読めるところ）。この URL が `client_id` です。
+3. 設定ファイルの `oauth` に `client_id` と `callback_url` を書いて起動します。署名鍵は初回起動時に `data_dir/oauth-client-key` に作られます。
+4. `https://<your-host>:8796/oauth/client-metadata.json` に出る JSON を取り、2 で決めた URL にそのまま置きます。
+   - 中身は `client_id`・戻り先・公開鍵などです。秘密は入っていません。
    - `client_id` は、その JSON を取る URL と完全に同じでなければなりません。
-
-公開しているメタデータ：
-
-| 名前 | client_id |
-|---|---|
-| `qc` | https://kojira.github.io/opencrab-bluesky-gateway/oauth/qc/client-metadata.json |
-| `prod` | https://kojira.github.io/opencrab-bluesky-gateway/oauth/prod/client-metadata.json |
+   - 署名鍵・`client_id`・`callback_url` のどれかを変えたら、もう一度取り直して置き直します。
 
 ## 開発
 
