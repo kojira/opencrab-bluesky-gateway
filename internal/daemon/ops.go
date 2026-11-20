@@ -23,7 +23,7 @@ import (
 const endTurn = "結果は返らない。この呼び出しだけではターンは終わらない。これで終えるなら、同じ応答の最後の行に NO_REPLY だけを書く。This call returns nothing. It does not end the turn by itself; to end the turn, write NO_REPLY alone on the final line of this same response."
 
 // Operations is the hello declaration, sorted by name as core requires. withFiles adds the
-// `files` field (workspace images) to post and reply.
+// `files` field (workspace images or one mp4 video) to post and reply.
 func Operations(withFiles bool) []any {
 	declare := func(name, desc string, input gate.Obj, dispatch, effect, sharing string) gate.Obj {
 		return gate.Obj{

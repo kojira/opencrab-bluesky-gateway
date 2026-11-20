@@ -32,8 +32,11 @@ core とは core の gate ソケット（Unix ドメインソケット）で、g
 | `like` | `event`（e番号か at:// の uri） | いいね |
 | `repost` | `event`（e番号か at:// の uri） | リポスト |
 | `follow` | `user`（u番号、ハンドル、DID） | フォロー |
+| `send_dm` | `text` | DM の会話の中でだけ使えます（下の「DM」）。 |
 
 - 本文の URL と、`@ハンドル`（DID が引けるもの）は、リンクとして表示されます。
+- `event`・`user`・`ref` のように会話の番号（e番号・u番号）を受ける欄には、操作の宣言（`input_schema`）で `"x-opencrab-short-ref": true` を付けています。core はこの欄だけ、番号を実際の at:// URI や DID に置き換えてから渡します。`files` の要素には `"x-opencrab-workspace-file": true` を付け、core が作業フォルダのファイルを送信用の置き場に写してから渡します。どちらも core 用の目印で、JSON Schema の `format` は使いません（使うと、モデルによっては道具の説明ごと断られます）。
+
 ### DM（オーナーだけ）
 
 - オーナー（設定の「オーナー」、ハンドルか did）から届いた DM だけを、会話ごとの session `bluesky-dm-<agent_id>-<convoId>` へ渡す（caller はオーナー）。オーナー以外の DM と自分の DM は渡さない。
@@ -51,9 +54,10 @@ core とは core の gate ソケット（Unix ドメインソケット）で、g
 | `read_timeline` | `limit`、`cursor`（どちらも任意） | 自分のホームタイムライン |
 | `read_author_feed` | `user`（u番号、ハンドル、DID）、`limit`、`cursor` | ある人の投稿 |
 | `search_posts` | `query`、`limit`、`cursor` | 投稿の検索 |
-| `read_thread` | `event`（e番号か at:// の uri）、`depth` | スレッド（親と返信。本文は省略しない） |
+| `read_thread` | `event`（e番号か at:// の uri）、`depth`（既定 6、最大 10） | スレッド（親と返信。本文は省略しない） |
+| `resolve` | `ref`（e番号、at:// の uri、bsky.app の投稿 URL） | 1 つの投稿の詳細（本文は全文、返信先とスレッドの最初の uri、引用先の uri、画像の URL） |
 
-- 投稿ごとに、作者、時刻（UTC）、返信・リポスト・いいねの数、本文、at:// の uri を返します。uri は `reply`・`like`・`repost` の `event` にそのまま渡せます。
+- 投稿ごとに、作者、時刻（UTC）、返信・リポスト・いいねの数、本文、画像の https URL、at:// の uri を返します。結果の `images` に画像の URL を並べます（core の `view_image` に渡すと画像を見られます）。uri は `reply`・`like`・`repost` の `event` にそのまま渡せます。
 - 一覧の本文は 150 文字（書記素）までです。全文は `read_thread` で読みます。
 - `limit` の既定は 8 件（最大 100）です。core はゲートウェイの操作の結果を約 2,500 トークンまで会話に入れ、超えるとファイルに保存して場所だけを返します。既定の件数はそこに収まる目安です。続きは `next_cursor` を `cursor` に渡して読みます。
 
@@ -77,7 +81,7 @@ core とは core の gate ソケット（Unix ドメインソケット）で、g
 
 | キー | 必須 | 内容 |
 |---|---|---|
-| `core_socket` | ○ | core の gate ソケット（core 設定の `gate.listen_socket`） |
+| `core_socket` | ○ | core の gate ソケット（core 設定の `[gate] listen_socket`） |
 | `data_dir` | ○ | bot の設定と受信の位置を置くフォルダ。`bots.json` はモード 0600 で書きます。 |
 | `listen` |  | 設定画面の待ち受け。既定 `0.0.0.0:8795` |
 | `core_api` |  | core の HTTP API。設定画面のエージェント一覧に使います。無ければエージェント ID を手で入れます。 |
@@ -91,14 +95,19 @@ go build -o opencrab-bluesky-gateway ./cmd/opencrab-bluesky-gateway
 ./opencrab-bluesky-gateway config.json
 ```
 
-### launchd で常駐させる
+### 本番（配備スクリプト）
 
-`deploy/com.kojira.opencrab-bluesky-gateway.plist` の `YOU` とパスを書き換えてから、次を実行します。
+本番では、OpenCrab の配備スクリプト（非公開リポジトリ `kojira/opencrab-deploy` の `opencrab-prod-runtime-deploy.py`）が、core やほかの gateway とは別に、このゲートウェイだけを止めて入れ替えます。
 
 ```sh
-cp deploy/com.kojira.opencrab-bluesky-gateway.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.kojira.opencrab-bluesky-gateway.plist
+opencrab-prod-runtime-deploy.py bluesky [--preflight-only] <bluesky-package.tgz>
 ```
+
+- パッケージは、ディレクトリ 1 つの中に `commit`（40 桁のコミット）と `bin/opencrab-bluesky-gateway` を入れた tar.gz です。
+- 設定ファイルは配備スクリプトが書きます（`data/gateway/bluesky-gateway.json`）。`data_dir` は `data/gate/bluesky`、`listen` は `0.0.0.0:8795`、`oauth` は下の `prod` のメタデータです。
+- 入れ替えの前に `data/gate/bluesky` と設定ファイルだけをバックアップし、起動後に設定画面（8795）が応答することと、`bots.json` で「動かす」になっている bot の数だけ core への `hello ok` がログに出ることを確かめます。失敗したら、このゲートウェイだけを元に戻します。
+
+`deploy/com.kojira.opencrab-bluesky-gateway.plist`（launchd の LaunchAgent）は、配備スクリプトに移る前（2026-11-12 まで）の常駐方法です。本番では使っていません。
 
 ## 設定画面
 

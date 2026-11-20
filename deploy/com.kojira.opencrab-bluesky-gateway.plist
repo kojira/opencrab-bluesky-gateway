@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyLists/PropertyList-1.0.dtd">
+<!-- Historical: how the gateway ran before 2026-11-12. Production now runs it from the
+     opencrab-deploy deployer (`opencrab-prod-runtime-deploy.py bluesky`); this LaunchAgent is not
+     used there. See README「本番（配備スクリプト）」. -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
