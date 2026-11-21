@@ -131,7 +131,8 @@ func (s *Store) Get(id string) (Bot, error) {
 	return Bot{}, ErrNotFound
 }
 
-// Create adds a disabled bot without credentials for an agent.
+// Create adds an enabled bot without credentials for an agent (it connects to core, and reads
+// Bluesky once it has an account).
 func (s *Store) Create(agentID, label string) (Bot, error) {
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {

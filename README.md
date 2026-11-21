@@ -34,6 +34,7 @@ core とは core の gate ソケット（Unix ドメインソケット）で、g
 | `follow` | `user`（u番号、ハンドル、DID） | フォロー |
 | `send_dm` | `text` | DM の会話の中でだけ使えます（下の「DM」）。 |
 
+- `files` は、エージェントの作業フォルダのファイルです。画像（JPEG・PNG・WebP・GIF）4 枚まで、または動画（mp4）1 本のどちらかです。画像は 2MB を超えると自動で縮めます。動画は 300MB・10 分まで（app.bsky.embed.video の上限）で、Bluesky の動画サービス（video.bsky.app）に送って処理を待ってから投稿します。`attachment_outbox_root` を設定したときだけ使えます。
 - 本文の URL と、`@ハンドル`（DID が引けるもの）は、リンクとして表示されます。
 - `event`・`user`・`ref` のように会話の番号（e番号・u番号）を受ける欄には、操作の宣言（`input_schema`）で `"x-opencrab-short-ref": true` を付けています。core はこの欄だけ、番号を実際の at:// URI や DID に置き換えてから渡します。`files` の要素には `"x-opencrab-workspace-file": true` を付け、core が作業フォルダのファイルを送信用の置き場に写してから渡します。どちらも core 用の目印で、JSON Schema の `format` は使いません（使うと、モデルによっては道具の説明ごと断られます）。
 
@@ -60,8 +61,6 @@ core とは core の gate ソケット（Unix ドメインソケット）で、g
 - 投稿ごとに、作者、時刻（UTC）、返信・リポスト・いいねの数、本文、画像の https URL、at:// の uri を返します。結果の `images` に画像の URL を並べます（core の `view_image` に渡すと画像を見られます）。uri は `reply`・`like`・`repost` の `event` にそのまま渡せます。
 - 一覧の本文は 150 文字（書記素）までです。全文は `read_thread` で読みます。
 - `limit` の既定は 8 件（最大 100）です。core はゲートウェイの操作の結果を約 2,500 トークンまで会話に入れ、超えるとファイルに保存して場所だけを返します。既定の件数はそこに収まる目安です。続きは `next_cursor` を `cursor` に渡して読みます。
-
-- `files` は、エージェントの作業フォルダのファイルです。画像（JPEG・PNG・WebP・GIF）4 枚まで、または動画（mp4）1 本のどちらかです。画像は 2MB を超えると自動で縮めます。動画は 300MB・10 分まで（app.bsky.embed.video の上限）で、Bluesky の動画サービス（video.bsky.app）に送って処理を待ってから投稿します。`attachment_outbox_root` を設定したときだけ使えます。
 
 ## 設定ファイル
 
